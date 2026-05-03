@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>संथालिया स्टोर - ऑफर्स और कूपन</title>
+    <link rel="icon" type="image/png" href="Santha.png">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f0f4ff;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .header {
+            background: #2539b4;
+            width: 100%;
+            padding: 24px 16px 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .logo {
+            max-width: 280px;
+            width: 80%;
+            border-radius: 8px;
+        }
+
+        .main {
+            width: 100%;
+            max-width: 420px;
+            padding: 0 16px;
+            flex: 1;
+        }
+
+        .loyalty-badge {
+            background: #e8632b;
+            color: white;
+            text-align: center;
+            padding: 12px 20px;
+            border-radius: 0 0 16px 16px;
+            margin: 0 auto;
+            max-width: 320px;
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        .loyalty-badge .hindi {
+            font-size: 17px;
+            display: block;
+            margin-bottom: 2px;
+        }
+
+        .loyalty-badge .english {
+            font-size: 12px;
+            opacity: 0.9;
+            font-weight: 400;
+        }
+
+        .benefits {
+            margin: 24px 0 20px;
+            padding: 0;
+            list-style: none;
+        }
+
+        .benefits li {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 8px 0;
+            font-size: 15px;
+            color: #333;
+            line-height: 1.4;
+        }
+
+        .benefits li .icon {
+            font-size: 18px;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+
+        .form-card {
+            background: white;
+            border-radius: 16px;
+            padding: 24px 20px;
+            box-shadow: 0 2px 16px rgba(37, 57, 180, 0.08);
+            margin-bottom: 24px;
+        }
+
+        .form-title {
+            font-size: 16px;
+            color: #2539b4;
+            margin-bottom: 20px;
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            color: #555;
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 14px 16px;
+            border: 2px solid #e0e4f0;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: border-color 0.2s;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        .form-group input:focus {
+            border-color: #2539b4;
+        }
+
+        .form-group input::placeholder {
+            color: #aab;
+        }
+
+        .phone-input-wrapper {
+            display: flex;
+            align-items: center;
+            border: 2px solid #e0e4f0;
+            border-radius: 10px;
+            overflow: hidden;
+            transition: border-color 0.2s;
+        }
+
+        .phone-input-wrapper:focus-within {
+            border-color: #2539b4;
+        }
+
+        .phone-prefix {
+            padding: 14px 0 14px 16px;
+            font-size: 16px;
+            color: #333;
+            font-weight: 500;
+            background: transparent;
+            flex-shrink: 0;
+        }
+
+        .phone-input-wrapper input {
+            border: none;
+            padding: 14px 16px 14px 8px;
+            border-radius: 0;
+        }
+
+        .phone-input-wrapper input:focus {
+            border-color: transparent;
+        }
+
+        .error-msg {
+            color: #d43b3b;
+            font-size: 12px;
+            margin-top: 6px;
+            display: none;
+        }
+
+        .error-msg.show {
+            display: block;
+        }
+
+        .submit-btn {
+            width: 100%;
+            padding: 16px;
+            background: #e8632b;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 17px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+            margin-top: 4px;
+        }
+
+        .submit-btn:active {
+            transform: scale(0.98);
+            background: #d45520;
+        }
+
+        .submit-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .submit-btn .btn-text-hindi {
+            display: block;
+            font-size: 17px;
+        }
+
+        .submit-btn .btn-text-english {
+            display: block;
+            font-size: 12px;
+            font-weight: 400;
+            opacity: 0.9;
+            margin-top: 2px;
+        }
+
+        /* Success state */
+        .success-screen {
+            display: none;
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        .success-screen.show {
+            display: block;
+        }
+
+        .success-icon {
+            font-size: 64px;
+            margin-bottom: 16px;
+        }
+
+        .success-screen h2 {
+            color: #2539b4;
+            font-size: 22px;
+            margin-bottom: 8px;
+        }
+
+        .success-screen p {
+            color: #555;
+            font-size: 15px;
+            line-height: 1.5;
+        }
+
+        .success-screen .whatsapp-note {
+            margin-top: 20px;
+            padding: 16px;
+            background: #e8f5e9;
+            border-radius: 10px;
+            font-size: 14px;
+            color: #2e7d32;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 16px;
+            font-size: 12px;
+            color: #999;
+            width: 100%;
+        }
+
+        .footer .address {
+            margin-top: 4px;
+            font-size: 11px;
+        }
+
+        /* Spinner */
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <img src="Santha.png" alt="Santhalia Store" class="logo">
+    </div>
+
+    <div class="loyalty-badge">
+        <span class="hindi">ऑफर्स और कूपन पाने के लिए जुड़ें</span>
+    </div>
+
+    <div class="main">
+        <ul class="benefits">
+            <li><span class="icon">🎁</span> <span>त्योहारों पर <strong>खास ऑफर</strong> सबसे पहले आपको मिलेंगे</span></li>
+            <li><span class="icon">💰</span> <span>WhatsApp पर <strong>छूट और कूपन</strong> की जानकारी सीधे पाएं</span></li>
+            <li><span class="icon">🛒</span> <span>नए सामान और <strong>सबसे सस्ते दाम</strong> की सूचना</span></li>
+        </ul>
+
+        <!-- Registration Form -->
+        <div class="form-card" id="formCard">
+            <div class="form-title">अपनी जानकारी दें</div>
+            <form id="registrationForm" novalidate>
+                <div class="form-group">
+                    <label for="name">आपका नाम</label>
+                    <input type="text" id="name" placeholder="नाम लिखें" autocomplete="name" required>
+                    <div class="error-msg" id="nameError">कृपया अपना नाम लिखें</div>
+                </div>
+                <div class="form-group">
+                    <label for="phone">WhatsApp नंबर</label>
+                    <div class="phone-input-wrapper">
+                        <span class="phone-prefix">+91</span>
+                        <input type="tel" id="phone" placeholder="10 अंकों का नंबर" maxlength="10" inputmode="numeric" pattern="[0-9]*" required>
+                    </div>
+                    <div class="error-msg" id="phoneError">कृपया सही 10 अंकों का नंबर डालें</div>
+                </div>
+                <button type="submit" class="submit-btn" id="submitBtn">
+                    <span class="btn-text-hindi">अभी जुड़ें</span>
+                </button>
+            </form>
+        </div>
+
+        <!-- Success Screen -->
+        <div class="success-screen" id="successScreen">
+            <div class="success-icon">🎉</div>
+            <h2>धन्यवाद!</h2>
+            <p>आप संथालिया स्टोर से जुड़ गए हैं।</p>
+            <div class="whatsapp-note">
+                📱 अब आपको WhatsApp पर ऑफर्स, कूपन और सस्ते दामों की जानकारी मिलती रहेगी!
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <div>संथालिया स्टोर &copy; 2026</div>
+        <div class="address">सुपौल, बिहार</div>
+    </div>
+
+    <script>
+        const form = document.getElementById('registrationForm');
+        const nameInput = document.getElementById('name');
+        const phoneInput = document.getElementById('phone');
+        const nameError = document.getElementById('nameError');
+        const phoneError = document.getElementById('phoneError');
+        const submitBtn = document.getElementById('submitBtn');
+        const formCard = document.getElementById('formCard');
+        const successScreen = document.getElementById('successScreen');
+
+        // Only allow digits in phone field
+        phoneInput.addEventListener('input', function() {
+            this.value = this.value.replace(/[^0-9]/g, '');
+        });
+
+        function validateName() {
+            const name = nameInput.value.trim();
+            if (name.length < 2) {
+                nameError.classList.add('show');
+                return false;
+            }
+            nameError.classList.remove('show');
+            return true;
+        }
+
+        function validatePhone() {
+            const phone = phoneInput.value.trim();
+            if (!/^[6-9]\d{9}$/.test(phone)) {
+                phoneError.classList.add('show');
+                return false;
+            }
+            phoneError.classList.remove('show');
+            return true;
+        }
+
+        nameInput.addEventListener('blur', validateName);
+        phoneInput.addEventListener('blur', validatePhone);
+
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const isNameValid = validateName();
+            const isPhoneValid = validatePhone();
+
+            if (!isNameValid || !isPhoneValid) return;
+
+            const name = nameInput.value.trim();
+            const phone = phoneInput.value.trim();
+
+            // Disable button and show loading
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="spinner"></span>';
+
+            try {
+                // --- Google Sheets Integration ---
+                // Replace SCRIPT_URL with your Google Apps Script Web App URL
+                const SCRIPT_URL = ''; // <-- Paste your URL here
+
+                if (SCRIPT_URL) {
+                    await fetch(SCRIPT_URL, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: name,
+                            phone: '+91' + phone,
+                            timestamp: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+                        })
+                    });
+                } else {
+                    // Demo mode: log to console
+                    console.log('Registration:', { name, phone: '+91' + phone });
+                    await new Promise(r => setTimeout(r, 800)); // Simulate network
+                }
+
+                // Show success
+                formCard.style.display = 'none';
+                successScreen.classList.add('show');
+
+            } catch (err) {
+                console.error('Submission error:', err);
+                alert('कुछ गलत हो गया। कृपया दोबारा कोशिश करें।');
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<span class="btn-text-hindi">अभी जुड़ें</span>';
+            }
+        });
+    </script>
+</body>
+</html>
