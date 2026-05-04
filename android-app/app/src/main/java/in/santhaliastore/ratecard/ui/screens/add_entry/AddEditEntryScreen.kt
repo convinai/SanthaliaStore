@@ -64,15 +64,18 @@ fun AddEditEntryScreen(
     var notes by rememberSaveable { mutableStateOf("") }
     var seeded by rememberSaveable { mutableStateOf(false) }
 
-    LaunchedEffect(state.isLoading, state.originalEntryId) {
-        if (!seeded && !state.isLoading && state.isEditMode) {
+    // Seed the form once the VM has finished loading the existing
+    // entry. Don't flip `seeded` in the add-mode branch eagerly —
+    // at first composition the snapshot still reports
+    // isEditMode = false (bind() hasn't run yet), which would block
+    // the edit-mode seed when bind() flips it true.
+    LaunchedEffect(state.isEditMode, state.isLoading) {
+        if (!seeded && state.isEditMode && !state.isLoading) {
             date = state.initialDate
             price = state.initialPrice
             quantity = state.initialQuantity
             supplier = state.initialSupplier
             notes = state.initialNotes
-            seeded = true
-        } else if (!state.isEditMode) {
             seeded = true
         }
     }

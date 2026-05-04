@@ -93,12 +93,16 @@ fun AddEditItemScreen(
     // Seed the form with the existing item's values exactly once, the
     // first time the VM has loaded them. Subsequent edits do not
     // overwrite what the user is typing.
-    LaunchedEffect(state.isLoading, state.originalCode) {
-        if (!seeded && !state.isLoading && state.isEditMode) {
+    //
+    // Note: we only flip `seeded` once we're sure we're in edit mode
+    // AND the load has finished. Doing it eagerly in the add-mode
+    // branch causes the seed to be skipped on edit, because at first
+    // composition (before bind() runs) the snapshot still reports
+    // isEditMode = false.
+    LaunchedEffect(state.isEditMode, state.isLoading) {
+        if (!seeded && state.isEditMode && !state.isLoading) {
             name = state.initialName
             unit = state.initialUnit
-            seeded = true
-        } else if (!state.isEditMode) {
             seeded = true
         }
     }
