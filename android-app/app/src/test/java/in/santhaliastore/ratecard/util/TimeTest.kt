@@ -6,6 +6,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 
 /**
  * Pure JVM tests for util/Time.kt — only the non-Context-dependent
@@ -65,9 +67,15 @@ class TimeTest {
 
     @Test
     fun `localDateToMillis pins to UTC midnight`() {
-        // 2026-05-04 UTC is 1778198400 seconds = 1778198400000 ms.
-        // Verify so a future timezone change doesn't silently shift dates.
+        // Compute the expected millis from java.time directly so the
+        // assertion documents the contract ("UTC midnight") rather
+        // than a hardcoded magic number that drifts as you cross
+        // months in your head. Robust to TZ on the runner.
         val ms = Time.localDateToMillis("2026-05-04")
-        assertEquals(1778198400000L, ms)
+        val expected = LocalDate.of(2026, 5, 4)
+            .atStartOfDay(ZoneId.of("UTC"))
+            .toInstant()
+            .toEpochMilli()
+        assertEquals(expected, ms)
     }
 }
