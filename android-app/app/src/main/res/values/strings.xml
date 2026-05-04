@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- App identity -->
-    <string name="app_name">Santhalia Rate Card</string>
+    <string name="app_name">Santhalia Store</string>
     <string name="app_tagline">Apni dukaan ka rate card</string>
+    <string name="app_logo_cd">Santhalia Store logo</string>
 
     <!-- Common actions -->
     <string name="action_save">Save karein</string>
@@ -15,12 +16,14 @@
     <string name="action_ok">OK</string>
 
     <!-- Home screen -->
-    <string name="home_title">Items</string>
+    <string name="home_title">Santhalia Store</string>
     <string name="home_search_hint">Item code ya naam search karein</string>
     <string name="home_fab_add_item">Item add karein</string>
     <string name="home_empty_title">Abhi koi item nahi hai</string>
     <string name="home_empty_caption">Pehla item add karein!</string>
     <string name="home_no_results">Koi item match nahi hua. Search badal kar dekhein.</string>
+    <string name="home_last_updated_format">Last update: %1$s</string>
+    <string name="home_no_purchase_caption">Abhi koi rate nahi</string>
 
     <!-- Item row labels -->
     <string name="last_rate_format">₹%1$s / %2$s</string>
@@ -48,6 +51,11 @@
     <string name="error_code_empty">Code zaroori hai</string>
     <string name="error_code_duplicate">Yeh code already use ho raha hai</string>
     <string name="error_name_empty">Naam zaroori hai</string>
+
+    <!-- Initial purchase entry while creating a new item (optional) -->
+    <string name="add_item_initial_section">Aaj ka rate (optional)</string>
+    <string name="add_item_initial_section_caption">Item ke saath hi pehla purchase entry add ho jaayega</string>
+    <string name="toast_item_and_entry_saved">Item aur rate save ho gaye</string>
 
     <!-- Add / Edit purchase entry -->
     <string name="add_entry_title">Naya purchase entry</string>

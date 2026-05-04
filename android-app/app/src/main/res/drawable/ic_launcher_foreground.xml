@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    "S" stylised mark on a transparent foreground for adaptive icons.
-    Stays well inside the 66dp safe zone (108dp canvas, content within
-    inner 72dp circle so launchers can crop freely).
+    Foreground for the adaptive icon: a saffron rounded "name plate"
+    (echoing the actual shop sign) with a bold white "S" inside.
+    All artwork stays inside the 66dp safe zone so circular launchers
+    don't crop it.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -10,15 +11,26 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Soft inner circle for visual weight on the saffron background -->
+    <!-- Saffron rounded rectangle — the brand "name plate" -->
     <path
-        android:fillColor="#FFFBF5"
-        android:pathData="M54,28 C40.7,28 30,38.7 30,52 C30,65.3 40.7,76 54,76 C67.3,76 78,65.3 78,52 C78,38.7 67.3,28 54,28 Z" />
+        android:fillColor="#EA580C"
+        android:pathData="M30,34 L78,34 A8,8 0 0 1 86,42 L86,74 A8,8 0 0 1 78,82 L30,82 A8,8 0 0 1 22,74 L22,42 A8,8 0 0 1 30,34 Z" />
 
-    <!-- Stylised "S" letter form -->
+    <!-- Bold stroked white "S" centered in the plate -->
     <path
-        android:fillColor="#92400E"
-        android:strokeColor="#92400E"
-        android:strokeWidth="1"
-        android:pathData="M64,42 Q64,38 60,38 L48,38 Q44,38 44,42 L44,46 Q44,50 48,50 L60,50 Q64,50 64,54 L64,62 Q64,66 60,66 L48,66 Q44,66 44,62" />
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"
+        android:pathData="
+            M66,49
+            C66,46 62,44 56,44
+            L52,44
+            C46,44 42,46 42,50
+            C42,54 46,56 54,57
+            C62,58 66,60 66,64
+            C66,68 62,70 56,70
+            L52,70
+            C46,70 42,68 42,64" />
 </vector>

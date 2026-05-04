@@ -1,5 +1,6 @@
 package `in`.santhaliastore.ratecard.ui.screens.home
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,6 +34,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -63,12 +66,22 @@ fun HomeScreen(
     val totalCount by viewModel.totalCount.collectAsStateWithLifecycle()
     val items = viewModel.pagedItems.collectAsLazyPagingItems()
     val listState = rememberLazyListState()
-    val context = androidx.compose.ui.platform.LocalContext.current
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.home_title)) },
+                title = {
+                    // Use the actual shop sign as the title — strong brand
+                    // anchor on every visit to home.
+                    Image(
+                        painter = painterResource(R.drawable.santha_logo),
+                        contentDescription = stringResource(R.string.app_logo_cd),
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .height(40.dp)
+                            .padding(vertical = 2.dp)
+                    )
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onBackground
@@ -144,7 +157,7 @@ fun HomeScreen(
                             val row = items[index] ?: return@items
                             ItemRow(
                                 row = row,
-                                relativeDate = Time.relativeFromLocalDate(context, row.lastDate),
+                                lastUpdateText = row.lastDate?.let { Time.displayDate(it) }.orEmpty(),
                                 onClick = { onItemClick(row.code) }
                             )
                         }
@@ -158,15 +171,19 @@ fun HomeScreen(
 }
 
 /**
- * Two-line item row.
+ * Item row, two visual rows of info:
  *
- *   ATA       Aata 5kg              <- bold name + monospace code chip
- *   ₹240 / Kg          2 din pehle  <- last rate + relative date
+ *   [ATA]  Aata 5kg
+ *          ₹240 / Kg  ·  Last update: 4 May 2026
+ *
+ * Code is shown as a monospace chip so users can scan at a glance
+ * (codes are short user-defined identifiers). The last purchase
+ * rate is the primary number; the date is the secondary subtitle.
  */
 @Composable
 private fun ItemRow(
     row: ItemWithLastEntry,
-    relativeDate: String,
+    lastUpdateText: String,
     onClick: () -> Unit
 ) {
     Card(
@@ -182,7 +199,7 @@ private fun ItemRow(
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(horizontal = 16.dp, vertical = 14.dp)
         ) {
             // First line: code chip + bold name
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -197,37 +214,35 @@ private fun ItemRow(
                 )
             }
 
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(8.dp))
 
-            // Second line: last rate + relative time
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val rateText = if (row.lastPrice != null) {
-                    if (!row.unit.isNullOrBlank()) {
-                        stringResource(R.string.last_rate_format, Money.plain(row.lastPrice), row.unit)
-                    } else {
-                        stringResource(R.string.last_rate_no_unit_format, Money.plain(row.lastPrice))
-                    }
+            // Second line: last rate (prominent) + last-update date
+            if (row.lastPrice != null) {
+                val rateText = if (!row.unit.isNullOrBlank()) {
+                    stringResource(R.string.last_rate_format, Money.plain(row.lastPrice), row.unit)
                 } else {
-                    stringResource(R.string.no_purchase_yet)
+                    stringResource(R.string.last_rate_no_unit_format, Money.plain(row.lastPrice))
                 }
                 Text(
                     text = rateText,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = if (row.lastPrice != null) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = if (row.lastPrice != null) FontWeight.SemiBold else FontWeight.Normal
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
                 )
-                if (relativeDate.isNotEmpty()) {
+                if (lastUpdateText.isNotEmpty()) {
+                    Spacer(Modifier.height(2.dp))
                     Text(
-                        text = relativeDate,
+                        text = stringResource(R.string.home_last_updated_format, lastUpdateText),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            } else {
+                Text(
+                    text = stringResource(R.string.home_no_purchase_caption),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
