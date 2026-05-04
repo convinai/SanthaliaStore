@@ -89,6 +89,12 @@ adding new behaviour.
 | Sync DTOs | response parses with / without `errors` | SyncDtosTest |
 | Sync API | Retrofit can install the interface (no wildcard / annotation regression) | AppsScriptApiTest |
 | Sync API | `envelope()` builds correct JSON for `health`, `upsertItem`, `bulkSync` | AppsScriptApiTest |
+| Item repo | renaming an item's code repoints purchase history atomically (FK satisfied at every step, repointed entries flagged `pendingSync = 1`) | Manual smoke (needs Room, see "Rename item code…" entries below) |
+| SyncRepository | `runFullSyncNow()` writes lastSyncedAt on success, lastSyncError on failure | Manual smoke ("Sync now success/failure surfacing" below) |
+| SyncRepository | `runFullSyncNow()` returns `AppResult.Ok(0)` when nothing pending and still stamps lastSyncedAt | Manual smoke ("Sync now after empty mark" below) |
+| SyncWorker | success path stamps lastSyncedAt and clears lastSyncError | Manual smoke ("Auto sync after item add" below) |
+| SyncWorker | failure path writes lastSyncError (visible on Settings) | Manual smoke ("Bad URL surfaces in Settings" below) |
+| SyncWorker | retries are capped at MAX_ATTEMPTS so a bad URL doesn't bounce forever | Manual smoke ("Bad URL surfaces in Settings" below) |
 
 ## Manual smoke checklist
 
@@ -101,11 +107,20 @@ surface.
 - [ ] **Add item** — code + name only saves; duplicate code is rejected with the Hinglish message
 - [ ] **Add item with first purchase** — filling price on the add-item screen creates both the item and the entry in one tap
 - [ ] **Edit item** — opening edit prefills code, name, unit from the existing row
+- [ ] **Rename item code preserves history** — edit an item with existing entries, change only the **code**, save → opening detail under the new code shows every previous purchase entry; the old code no longer appears in the home list
+- [ ] **Rename item code triggers re-sync** — after the rename, open Settings → pending count includes both the new item row and one row per repointed entry; running "Sync now" pushes them and the count returns to 0
+- [ ] **Rename onto a previously-deleted code** — soft-delete item `OLD`, then edit a different item and rename its code to `OLD` → the rename succeeds (it revives the row with the renamed item's name/unit) and the entries from the source item are visible under `OLD`
 - [ ] **Edit entry** — opening edit prefills date, price, quantity, supplier, notes from the existing row
 - [ ] **Delete item** — confirm dialog appears; entry history is wiped on confirm
 - [ ] **Delete entry** — confirm dialog appears; entry disappears from item-detail history
 - [ ] **Search** — typing partial code or name (Hinglish or English) filters the list within ~300 ms
 - [ ] **Sync now** — tapping the Sync button pushes every active item + entry to the sheet, even rows that synced previously
+- [ ] **Sync now success/failure surfacing** — with a working URL the snackbar shows "Sync ho gaya — N rows" and `lastSyncedAt` updates on Settings; with a deliberately wrong URL the snackbar shows "Sync nahi hua: …" and the same error appears in red under "Pichhli error: …" on Settings (no silent failure path)
+- [ ] **Sync now after empty mark** — tap "Sync now" twice in a row; the second tap should still show "Sync ho gaya — kuch naya nahi" (zero processed) and `lastSyncedAt` should still update — proving the success codepath fires even when there's nothing pending
+- [ ] **Pending count visible** — after editing an item, the Settings screen shows "N rows sync hone baaki hain"; after a successful sync it switches to "Sab kuch sync ho gaya hai"
+- [ ] **View details affordance** — tapping "Details dekhein" on Settings shows the human-formatted last-sync timestamp, pending count, and (if any) the verbatim last error in a wrap-friendly dialog
+- [ ] **Auto sync after item add** — add a single item with the URL configured → within 30 s the worker picks up the change, the pending count drops to 0, `lastSyncedAt` updates, and the row appears in the sheet
+- [ ] **Bad URL surfaces in Settings** — set the URL to something that 404s, tap "Sync now" → the snackbar shows the failure, the red "Pichhli error" line is populated, and `lastSyncedAt` stays unchanged. After a few minutes (≤ MAX_ATTEMPTS retries via the worker) WorkManager stops bouncing the work — the "Pichhli error" remains the last reported failure
 - [ ] **Sync indicator** — pending icon flips to green check after successful sync; error state on a bad URL
 - [ ] **Connection test** — Settings → Test connection shows green when the URL is good, red on a 404 / mismatched script
 - [ ] **PIN lock** — enabling and entering a PIN gates the next cold start; disabling clears it

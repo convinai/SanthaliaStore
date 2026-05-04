@@ -28,6 +28,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -37,11 +40,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -51,6 +56,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import `in`.santhaliastore.ratecard.BuildConfig
 import `in`.santhaliastore.ratecard.R
 import `in`.santhaliastore.ratecard.ui.screens.settings.SettingsViewModel.TestResult
+import `in`.santhaliastore.ratecard.ui.screens.settings.SettingsViewModel.UiEvent
 import java.text.DateFormat
 import java.util.Date
 
@@ -58,7 +64,8 @@ import java.util.Date
  * Settings screen.
  *
  * Three sections per spec:
- *   - Sync settings (URL field, sync now, test connection, last synced)
+ *   - Sync settings (URL field, sync now, test connection, last synced,
+ *     pending count, last error, "view details")
  *   - Lock (PIN toggle + change-pin entry point)
  *   - About (version, made-for line)
  */
@@ -82,6 +89,33 @@ fun SettingsScreen(
     }
 
     var showPinSheet by rememberSaveable { mutableStateOf(false) }
+    var showSyncDetails by rememberSaveable { mutableStateOf(false) }
+
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Resolve the Hinglish snackbar copy here (not in the VM) so
+    // every user-visible string lives in res/values/strings.xml.
+    val snackSyncDoneNoRows = stringResource(R.string.sync_done_no_rows)
+    val snackSyncDoneWithRowsFormat = stringResource(R.string.sync_done_with_rows_format)
+    val snackSyncFailedFormat = stringResource(R.string.sync_failed_format)
+
+    // One-shot snackbar events from the VM (sync done / sync failed).
+    LaunchedEffect(viewModel) {
+        viewModel.events.collect { event ->
+            val text = when (event) {
+                is UiEvent.SyncSuccess -> if (event.processed > 0) {
+                    snackSyncDoneWithRowsFormat.format(event.processed)
+                } else {
+                    snackSyncDoneNoRows
+                }
+                is UiEvent.SyncFailure -> snackSyncFailedFormat.format(event.message)
+            }
+            snackbarHostState.showSnackbar(
+                message = text,
+                duration = SnackbarDuration.Long
+            )
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -99,7 +133,8 @@ fun SettingsScreen(
                     containerColor = MaterialTheme.colorScheme.background
                 )
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Column(
             Modifier
@@ -135,14 +170,22 @@ fun SettingsScreen(
             ) {
                 Button(
                     onClick = { viewModel.syncNow() },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
+                    enabled = !state.syncing
                 ) {
-                    Text(stringResource(R.string.sync_now))
+                    if (state.syncing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.height(18.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text(stringResource(R.string.sync_now))
+                    }
                 }
                 OutlinedButton(
                     onClick = { viewModel.testConnection() },
                     modifier = Modifier.weight(1f),
-                    enabled = !state.testingConnection
+                    enabled = !state.testingConnection && !state.syncing
                 ) {
                     if (state.testingConnection) {
                         CircularProgressIndicator(
@@ -155,7 +198,7 @@ fun SettingsScreen(
                 }
             }
 
-            // Test result
+            // Test result (separate from sync result).
             when (val r = state.testResult) {
                 is TestResult.Ok -> InlineStatus(
                     text = stringResource(R.string.sync_test_ok),
@@ -168,8 +211,21 @@ fun SettingsScreen(
                 null -> Unit
             }
 
-            // Last synced
+            // Pending count — tells the user what the next sync will push.
             Spacer(Modifier.height(12.dp))
+            val pendingText = if (state.pendingCount > 0) {
+                stringResource(R.string.sync_pending_format, state.pendingCount)
+            } else {
+                stringResource(R.string.sync_pending_none)
+            }
+            Text(
+                text = pendingText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            // Last synced.
+            Spacer(Modifier.height(4.dp))
             val lastSyncText = if (state.lastSyncedAt > 0L) {
                 stringResource(
                     R.string.sync_last_synced_format,
@@ -184,6 +240,24 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            // Last sync error in red (if any), verbatim.
+            val lastError = state.lastSyncError
+            if (!lastError.isNullOrBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = stringResource(R.string.sync_last_error_format, lastError),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+
+            // "View details" — opens a dialog with the same info, useful
+            // when error text overflows or the user wants to copy it.
+            Spacer(Modifier.height(4.dp))
+            TextButton(onClick = { showSyncDetails = true }) {
+                Text(stringResource(R.string.sync_view_details))
+            }
 
             Spacer(Modifier.height(24.dp))
 
@@ -273,6 +347,15 @@ fun SettingsScreen(
             }
         )
     }
+
+    if (showSyncDetails) {
+        SyncDetailsDialog(
+            lastSyncedAt = state.lastSyncedAt,
+            lastSyncError = state.lastSyncError,
+            pendingCount = state.pendingCount,
+            onDismiss = { showSyncDetails = false }
+        )
+    }
 }
 
 @Composable
@@ -307,6 +390,55 @@ private fun InlineStatus(text: String, success: Boolean) {
             modifier = Modifier.padding(start = 8.dp)
         )
     }
+}
+
+/**
+ * Dialog showing sync state in human-friendly form. Useful when the
+ * inline error text gets clipped — the dialog wraps freely.
+ */
+@Composable
+private fun SyncDetailsDialog(
+    lastSyncedAt: Long,
+    lastSyncError: String?,
+    pendingCount: Int,
+    onDismiss: () -> Unit
+) {
+    val lastSyncText = if (lastSyncedAt > 0L) {
+        stringResource(
+            R.string.sync_last_synced_format,
+            DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                .format(Date(lastSyncedAt))
+        )
+    } else {
+        stringResource(R.string.sync_never)
+    }
+    val pendingText = if (pendingCount > 0) {
+        stringResource(R.string.sync_pending_format, pendingCount)
+    } else {
+        stringResource(R.string.sync_pending_none)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.sync_details_title)) },
+        text = {
+            Column {
+                Text(text = lastSyncText, style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(8.dp))
+                Text(text = pendingText, style = MaterialTheme.typography.bodyMedium)
+                if (!lastSyncError.isNullOrBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.sync_last_error_format, lastSyncError),
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_ok)) }
+        }
+    )
 }
 
 /**

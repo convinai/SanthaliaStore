@@ -1,9 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Foreground for the adaptive icon: a saffron rounded "name plate"
-    (echoing the actual shop sign) with a bold white "S" inside.
-    All artwork stays inside the 66dp safe zone so circular launchers
-    don't crop it.
+    Foreground for the adaptive launcher icon.
+
+    Composition (mirrors the actual Santhalia Store shop sign):
+      * saffron rounded "name plate" pill, filled #EA580C
+      * a chunky white block letter "S" inside the pill, drawn as a single
+        filled subpath (no strokes — strokes can render thin or invisibly
+        on some launcher implementations).
+
+    All artwork stays inside the 66dp safe zone (radius 33 from canvas
+    centre 54,54) so circular launcher masks don't crop it.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -11,26 +17,25 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Saffron rounded rectangle — the brand "name plate" -->
+    <!-- Saffron rounded rectangle — the brand "name plate". -->
     <path
         android:fillColor="#EA580C"
         android:pathData="M30,34 L78,34 A8,8 0 0 1 86,42 L86,74 A8,8 0 0 1 78,82 L30,82 A8,8 0 0 1 22,74 L22,42 A8,8 0 0 1 30,34 Z" />
 
-    <!-- Bold stroked white "S" centered in the plate -->
+    <!--
+        Chunky filled white "S" mark inside the pill. Built from five
+        overlapping filled rectangles that together trace an S silhouette;
+        Android's default non-zero fill rule unions them, so the result is
+        one solid letter shape with no gaps and no thin strokes.
+
+        Layout inside the pill (pill spans y=34..82):
+          top bar:        x=40..68  y=42..50
+          top-left stem:  x=40..48  y=42..58
+          middle bar:     x=40..68  y=54..62
+          bot-right stem: x=60..68  y=58..74
+          bottom bar:     x=40..68  y=66..74
+    -->
     <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="8"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:fillColor="#00000000"
-        android:pathData="
-            M66,49
-            C66,46 62,44 56,44
-            L52,44
-            C46,44 42,46 42,50
-            C42,54 46,56 54,57
-            C62,58 66,60 66,64
-            C66,68 62,70 56,70
-            L52,70
-            C46,70 42,68 42,64" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,42 L68,42 L68,50 L40,50 Z M40,42 L48,42 L48,58 L40,58 Z M40,54 L68,54 L68,62 L40,62 Z M60,58 L68,58 L68,74 L60,74 Z M40,66 L68,66 L68,74 L40,74 Z" />
 </vector>

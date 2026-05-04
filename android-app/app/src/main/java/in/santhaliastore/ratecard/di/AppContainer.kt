@@ -42,7 +42,14 @@ class AppContainer(private val context: Context) {
     }
 
     val itemRepo: ItemRepository by lazy {
-        ItemRepository(database.itemDao(), notifyChange)
+        // ItemRepository needs both DAOs and the database handle so the
+        // atomic code-rename flow can run inside `withTransaction`.
+        ItemRepository(
+            dao = database.itemDao(),
+            purchaseEntryDao = database.purchaseEntryDao(),
+            database = database,
+            notifyChange = notifyChange
+        )
     }
 
     val purchaseRepo: PurchaseRepository by lazy {

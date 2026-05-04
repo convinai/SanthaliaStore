@@ -29,6 +29,22 @@ interface PurchaseEntryDao {
     @Query("UPDATE purchase_entries SET deleted = 1, pendingSync = 1, updatedAt = :updatedAt WHERE entryId = :entryId")
     suspend fun softDelete(entryId: String, updatedAt: String)
 
+    /**
+     * Move every active entry from [oldCode] onto [newCode]. Used by the
+     * atomic item-rename flow so the purchase history stays attached to
+     * the renamed item instead of orphaning under a soft-deleted code.
+     *
+     * Every touched row is flipped to `pendingSync = 1` because the
+     * cloud sheet keys entries by `itemCode` — without re-syncing the
+     * server would still show them under the old code.
+     *
+     * Soft-deleted rows are intentionally left alone: their tombstones
+     * already reference the old code on the server and rewriting them
+     * would resurrect dead history.
+     */
+    @Query("UPDATE purchase_entries SET itemCode = :newCode, pendingSync = 1, updatedAt = :updatedAt WHERE itemCode = :oldCode AND deleted = 0")
+    suspend fun repointItemCode(oldCode: String, newCode: String, updatedAt: String)
+
     @Query("UPDATE purchase_entries SET pendingSync = 0 WHERE entryId IN (:ids)")
     suspend fun clearPendingSync(ids: List<String>)
 

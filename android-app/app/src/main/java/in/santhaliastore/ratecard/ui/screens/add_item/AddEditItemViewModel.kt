@@ -125,12 +125,27 @@ class AddEditItemViewModel(
             }
 
             _state.update { it.copy(isSaving = true) }
-            // If the user changed the code on edit, we soft-delete the
-            // old row and write a new one — Room PK is the code.
+            // If the user changed the code on edit, we have to move
+            // every purchase entry off the old code and onto the new
+            // one in the same transaction as the item write — otherwise
+            // the entries orphan under the soft-deleted old code and
+            // the renamed item appears to have no history. The repo
+            // handles atomicity; we just have to call the right API.
+            //
+            // Note: if `trimmedCode` happens to match a soft-deleted
+            // row, the upsert inside renameCode revives that row with
+            // the new content. Active duplicates were already rejected
+            // by the existsActive() check above.
             if (isEdit && originalCode != null && originalCode != trimmedCode) {
-                itemRepo.softDelete(originalCode)
+                itemRepo.renameCode(
+                    oldCode = originalCode,
+                    newCode = trimmedCode,
+                    name = trimmedName,
+                    unit = unit.ifEmpty { null }
+                )
+            } else {
+                itemRepo.save(code = trimmedCode, name = trimmedName, unit = unit)
             }
-            itemRepo.save(code = trimmedCode, name = trimmedName, unit = unit)
 
             // Only fire the entry-write on the add path with a valid
             // price. Anything else (edit, blank price) is a no-op.

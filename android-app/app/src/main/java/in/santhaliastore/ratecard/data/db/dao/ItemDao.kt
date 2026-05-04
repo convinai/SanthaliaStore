@@ -68,6 +68,14 @@ interface ItemDao {
     suspend fun pendingSync(): List<ItemEntity>
 
     /**
+     * Reactive count of rows still waiting to be synced. Surfaced in
+     * Settings so the user can see at a glance how many items the next
+     * sync will push.
+     */
+    @Query("SELECT COUNT(*) FROM items WHERE pendingSync = 1")
+    fun observePendingCount(): Flow<Int>
+
+    /**
      * Paged list of items with their most recent non-deleted entry.
      *
      * Sort: pinned by `name COLLATE NOCASE` so the list reads

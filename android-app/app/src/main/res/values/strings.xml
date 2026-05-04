@@ -87,6 +87,14 @@
     <string name="sync_test_ok">Connection theek hai</string>
     <string name="sync_test_failed">Connection nahi laga: %1$s</string>
     <string name="sync_url_invalid">Sahi URL daalein</string>
+    <string name="sync_pending_format">%1$d rows sync hone baaki hain</string>
+    <string name="sync_pending_none">Sab kuch sync ho gaya hai</string>
+    <string name="sync_last_error_format">Pichhli error: %1$s</string>
+    <string name="sync_done_with_rows_format">Sync ho gaya — %1$d rows</string>
+    <string name="sync_done_no_rows">Sync ho gaya — kuch naya nahi</string>
+    <string name="sync_failed_format">Sync nahi hua: %1$s</string>
+    <string name="sync_view_details">Details dekhein</string>
+    <string name="sync_details_title">Sync details</string>
 
     <!-- Settings -->
     <string name="settings_title">Settings</string>

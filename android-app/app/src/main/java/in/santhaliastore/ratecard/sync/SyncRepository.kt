@@ -86,19 +86,32 @@ class SyncRepository(
     }
 
     /**
-     * Mark every active row as pending and trigger an immediate sync.
-     * The user-facing "Sync now" path: ensures the Google Sheet ends
-     * up with a complete snapshot of items + purchase history, even
-     * the rows that were synced previously and would otherwise be
-     * skipped by the incremental worker.
+     * Synchronous "Sync now" — bypasses WorkManager so the Settings
+     * screen can render the outcome immediately.
      *
-     * Suspending so callers can chain the DB writes — the network
-     * push happens off-thread inside [SyncWorker].
+     * Marks every row pending, then pushes inline on whatever coroutine
+     * dispatcher the caller provided. The result is mirrored into
+     * [SettingsRepository] (`lastSyncedAt` / `lastSyncError`) so the UI
+     * stays consistent whether the sync ran here or via the worker.
+     *
+     * Returns the count of rows the server confirmed as processed
+     * (zero is fine — it just means nothing was pending).
      */
-    suspend fun requestFullSync() {
+    suspend fun runFullSyncNow(): AppResult<Int> {
+        // Mark first, then push. If push fails the rows stay pending
+        // and the worker's next run will retry them.
         itemRepo.markAllPendingSync()
         purchaseRepo.markAllPendingSync()
-        requestImmediateSync()
+        val outcome = pushAllPending()
+        when (outcome) {
+            is AppResult.Ok -> {
+                settings.setLastSyncedNow()
+            }
+            is AppResult.Err -> {
+                settings.setLastSyncError(outcome.message)
+            }
+        }
+        return outcome
     }
 
     /**

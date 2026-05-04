@@ -7,20 +7,25 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import `in`.santhaliastore.ratecard.RateCardApp
 import `in`.santhaliastore.ratecard.data.prefs.SettingsRepository
+import `in`.santhaliastore.ratecard.data.repo.ItemRepository
+import `in`.santhaliastore.ratecard.data.repo.PurchaseRepository
 import `in`.santhaliastore.ratecard.sync.SyncRepository
 import `in`.santhaliastore.ratecard.util.AppResult
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 class SettingsViewModel(
     private val settingsRepo: SettingsRepository,
-    private val syncRepo: SyncRepository
+    private val syncRepo: SyncRepository,
+    itemRepo: ItemRepository,
+    purchaseRepo: PurchaseRepository
 ) : ViewModel() {
 
     data class Snapshot(
@@ -29,7 +34,9 @@ class SettingsViewModel(
         val lastSyncedAt: Long = 0L,
         val lastSyncError: String? = null,
         val testingConnection: Boolean = false,
-        val testResult: TestResult? = null
+        val testResult: TestResult? = null,
+        val syncing: Boolean = false,
+        val pendingCount: Int = 0
     )
 
     sealed interface TestResult {
@@ -39,23 +46,55 @@ class SettingsViewModel(
 
     private val _testing = MutableStateFlow(false)
     private val _testResult = MutableStateFlow<TestResult?>(null)
+    private val _syncing = MutableStateFlow(false)
+
+    private val pendingCountFlow = combine(
+        itemRepo.observePendingCount(),
+        purchaseRepo.observePendingCount()
+    ) { items, entries -> items + entries }
+
+    /** One-shot UI events (snackbars). Buffered so we never drop one. */
+    private val _events = Channel<UiEvent>(Channel.BUFFERED)
+    val events = _events.receiveAsFlow()
+
+    /**
+     * Sync outcome events. The Compose layer translates these into
+     * stringResource-backed snackbars so all user-visible copy stays
+     * in `res/values/strings.xml` (and easy to localise later).
+     */
+    sealed interface UiEvent {
+        data class SyncSuccess(val processed: Int) : UiEvent
+        data class SyncFailure(val message: String) : UiEvent
+    }
 
     val state: StateFlow<Snapshot> = combine(
         settingsRepo.sheetUrl,
         settingsRepo.pinEnabled,
         settingsRepo.lastSyncedAt,
         settingsRepo.lastSyncError,
-        combine(_testing, _testResult) { t, r -> t to r }
-    ) { url, pin, last, err, (testing, testRes) ->
+        combine(_testing, _testResult, _syncing, pendingCountFlow) {
+                testing, testRes, syncing, pending ->
+            Quad(testing, testRes, syncing, pending)
+        }
+    ) { url, pin, last, err, q ->
         Snapshot(
             sheetUrl = url,
             pinEnabled = pin,
             lastSyncedAt = last,
             lastSyncError = err,
-            testingConnection = testing,
-            testResult = testRes
+            testingConnection = q.testing,
+            testResult = q.testRes,
+            syncing = q.syncing,
+            pendingCount = q.pending
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, Snapshot())
+
+    private data class Quad(
+        val testing: Boolean,
+        val testRes: TestResult?,
+        val syncing: Boolean,
+        val pending: Int
+    )
 
     fun setSheetUrl(url: String) {
         viewModelScope.launch { settingsRepo.setSheetUrl(url) }
@@ -71,13 +110,26 @@ class SettingsViewModel(
     }
 
     /**
-     * "Sync now" pushes the full local rate card up to the sheet —
-     * not just the rows that changed since last sync. Marks every
-     * active item + entry pending, then triggers the worker.
+     * "Sync now" — runs the push inline (NOT via WorkManager) so the
+     * outcome shows up on the Settings screen immediately. The
+     * background worker still handles auto-sync after writes.
+     *
+     * Surfaces every outcome via the snackbar channel:
+     *   - Success with rows  -> "Sync ho gaya — N rows"
+     *   - Success with zero  -> "Sync ho gaya — kuch naya nahi"
+     *   - Failure            -> the error message verbatim
      */
     fun syncNow() {
+        if (_syncing.value) return // ignore double taps
+        _syncing.value = true
         viewModelScope.launch {
-            syncRepo.requestFullSync()
+            val result = syncRepo.runFullSyncNow()
+            _syncing.value = false
+            val event = when (result) {
+                is AppResult.Ok -> UiEvent.SyncSuccess(result.value)
+                is AppResult.Err -> UiEvent.SyncFailure(result.message)
+            }
+            _events.trySend(event)
         }
     }
 
@@ -107,7 +159,9 @@ class SettingsViewModel(
                     as RateCardApp)
                 SettingsViewModel(
                     settingsRepo = app.container.settingsRepo,
-                    syncRepo = app.container.syncRepo
+                    syncRepo = app.container.syncRepo,
+                    itemRepo = app.container.itemRepo,
+                    purchaseRepo = app.container.purchaseRepo
                 )
             }
         }
