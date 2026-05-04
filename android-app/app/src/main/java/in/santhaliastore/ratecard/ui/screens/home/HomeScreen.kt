@@ -171,14 +171,16 @@ fun HomeScreen(
 }
 
 /**
- * Item row, two visual rows of info:
+ * Item row — primary identity (code chip + name) on the left,
+ * trailing meta (price + date) on the right of a single visual row.
  *
- *   [ATA]  Aata 5kg
- *          ₹240 / Kg  ·  Last update: 4 May 2026
+ *   [ATA]  Aata 5kg                   ₹240 / Kg
+ *                                     4 May 2026
  *
- * Code is shown as a monospace chip so users can scan at a glance
- * (codes are short user-defined identifiers). The last purchase
- * rate is the primary number; the date is the secondary subtitle.
+ * Layout follows the standard Material list-item anatomy: leading
+ * supporting visual + headline take a flexible width, trailing
+ * supporting text aligns to the end. The date sits as a secondary
+ * caption directly under the price so the eye groups them together.
  */
 @Composable
 private fun ItemRow(
@@ -196,53 +198,63 @@ private fun ItemRow(
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(
+        Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // First line: code chip + bold name
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // Leading: code chip + bold name. Takes whatever width is
+            // left after the trailing column claims its intrinsic size.
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 CodeChip(row.code)
-                Spacer(Modifier.width(12.dp))
                 Text(
                     text = row.name,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
             }
 
-            Spacer(Modifier.height(8.dp))
-
-            // Second line: last rate (prominent) + last-update date
-            if (row.lastPrice != null) {
-                val rateText = if (!row.unit.isNullOrBlank()) {
-                    stringResource(R.string.last_rate_format, Money.plain(row.lastPrice), row.unit)
-                } else {
-                    stringResource(R.string.last_rate_no_unit_format, Money.plain(row.lastPrice))
-                }
-                Text(
-                    text = rateText,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
-                )
-                if (lastUpdateText.isNotEmpty()) {
-                    Spacer(Modifier.height(2.dp))
+            // Trailing: price + date stacked, end-aligned. When there
+            // is no purchase yet, fall back to a single muted caption.
+            Column(horizontalAlignment = Alignment.End) {
+                if (row.lastPrice != null) {
+                    val rateText = if (!row.unit.isNullOrBlank()) {
+                        stringResource(R.string.last_rate_format, Money.plain(row.lastPrice), row.unit)
+                    } else {
+                        stringResource(R.string.last_rate_no_unit_format, Money.plain(row.lastPrice))
+                    }
                     Text(
-                        text = stringResource(R.string.home_last_updated_format, lastUpdateText),
+                        text = rateText,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
+                    if (lastUpdateText.isNotEmpty()) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = lastUpdateText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
+                        )
+                    }
+                } else {
+                    Text(
+                        text = stringResource(R.string.home_no_purchase_caption),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-            } else {
-                Text(
-                    text = stringResource(R.string.home_no_purchase_caption),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
         }
     }

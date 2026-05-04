@@ -38,6 +38,18 @@ interface ItemDao {
     @Query("UPDATE items SET pendingSync = 0 WHERE code IN (:codes)")
     suspend fun clearPendingSync(codes: List<String>)
 
+    /**
+     * Mark every row pending. Used by the manual "Sync now" path so the
+     * Google Sheet ends up with a full snapshot of the rate card,
+     * including rows that were synced previously and would otherwise
+     * be skipped by the incremental worker.
+     *
+     * Includes soft-deleted rows so a previously-deleted item that
+     * never made it to the server still propagates its tombstone.
+     */
+    @Query("UPDATE items SET pendingSync = 1")
+    suspend fun markAllPending()
+
     /* ----------------------------- reads ------------------------------ */
 
     @Query("SELECT * FROM items WHERE code = :code LIMIT 1")

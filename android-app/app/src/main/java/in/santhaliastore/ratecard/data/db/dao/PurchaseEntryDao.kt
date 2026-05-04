@@ -32,6 +32,14 @@ interface PurchaseEntryDao {
     @Query("UPDATE purchase_entries SET pendingSync = 0 WHERE entryId IN (:ids)")
     suspend fun clearPendingSync(ids: List<String>)
 
+    /**
+     * Mark every row pending. Used by the manual "Sync now" path so the
+     * Google Sheet ends up with the full purchase history. Includes
+     * soft-deleted rows so unsynced tombstones still propagate.
+     */
+    @Query("UPDATE purchase_entries SET pendingSync = 1")
+    suspend fun markAllPending()
+
     /* ----------------------------- reads ------------------------------ */
 
     @Query("SELECT * FROM purchase_entries WHERE entryId = :entryId LIMIT 1")

@@ -74,33 +74,46 @@ class ItemRepository(
     }
 
     /**
-     * Take a raw user query and convert it into a safe FTS4 expression.
-     *
-     * - Strip characters FTS4 treats specially (-, ", *, etc.) so a
-     *   user typing "5kg" doesn't accidentally produce a phrase token.
-     * - Split on whitespace, drop empties, append `*` to each token
-     *   so partial typing matches.
+     * Mark every item row as pending so the next sync pushes them all.
+     * Called by the manual "Sync now" path; the sync worker runs the
+     * actual upload on a network constraint.
      */
-    private fun toFtsPrefixQuery(raw: String): String {
-        val cleaned = raw
-            .lowercase()
-            .filter { it.isLetterOrDigit() || it == ' ' }
-            .trim()
-        if (cleaned.isEmpty()) return "\"\""
-        return cleaned.split(Regex("\\s+")).joinToString(" ") { token ->
-            "$token*"
-        }
+    suspend fun markAllPendingSync() {
+        dao.markAllPending()
+        notifyChange()
     }
 
-    private companion object {
+    companion object {
         // Page size tuned for low-end devices: we want enough rows to
         // fill the viewport on cheap 5" phones (~9 rows visible) but
         // not so many that scrolling causes a spike.
-        val PAGING_CONFIG = PagingConfig(
+        internal val PAGING_CONFIG = PagingConfig(
             pageSize = 30,
             initialLoadSize = 60,
             prefetchDistance = 15,
             enablePlaceholders = false
         )
+
+        /**
+         * Take a raw user query and convert it into a safe FTS4 expression.
+         *
+         * - Strip characters FTS4 treats specially (-, ", *, etc.) so a
+         *   user typing "5kg" doesn't accidentally produce a phrase token.
+         * - Split on whitespace, drop empties, append `*` to each token
+         *   so partial typing matches.
+         *
+         * Lifted out of the instance so unit tests can exercise it
+         * without touching Room.
+         */
+        fun toFtsPrefixQuery(raw: String): String {
+            val cleaned = raw
+                .lowercase()
+                .filter { it.isLetterOrDigit() || it == ' ' }
+                .trim()
+            if (cleaned.isEmpty()) return "\"\""
+            return cleaned.split(Regex("\\s+")).joinToString(" ") { token ->
+                "$token*"
+            }
+        }
     }
 }

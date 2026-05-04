@@ -43,6 +43,24 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./android-app/gradlew
 
+      # Run unit tests BEFORE building the APK. A failing test fails the
+      # whole job, so a broken `main` never produces a downloadable APK.
+      # Tests are pure JVM (src/test) so they don't need an emulator.
+      - name: Run unit tests
+        working-directory: ./android-app
+        env:
+          GRADLE_OPTS: -Xmx4g -Dorg.gradle.daemon=false
+        run: ./gradlew testDebugUnitTest --no-daemon
+
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report-${{ github.sha }}
+          path: android-app/app/build/reports/tests/
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Build debug APK
         working-directory: ./android-app
         env:

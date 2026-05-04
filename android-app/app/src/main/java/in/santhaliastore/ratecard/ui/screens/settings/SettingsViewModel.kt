@@ -70,8 +70,15 @@ class SettingsViewModel(
         viewModelScope.launch { settingsRepo.setPin(rawPin) }
     }
 
+    /**
+     * "Sync now" pushes the full local rate card up to the sheet —
+     * not just the rows that changed since last sync. Marks every
+     * active item + entry pending, then triggers the worker.
+     */
     fun syncNow() {
-        syncRepo.requestImmediateSync()
+        viewModelScope.launch {
+            syncRepo.requestFullSync()
+        }
     }
 
     fun testConnection() {

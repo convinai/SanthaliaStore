@@ -65,4 +65,14 @@ class PurchaseRepository(
         if (ids.isEmpty()) return
         dao.clearPendingSync(ids)
     }
+
+    /**
+     * Mark every entry row pending so the next sync pushes the entire
+     * purchase history to the server. Used by the manual "Sync now"
+     * path; the worker handles the actual upload.
+     */
+    suspend fun markAllPendingSync() {
+        dao.markAllPending()
+        notifyChange()
+    }
 }

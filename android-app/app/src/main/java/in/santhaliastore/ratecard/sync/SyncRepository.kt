@@ -86,6 +86,22 @@ class SyncRepository(
     }
 
     /**
+     * Mark every active row as pending and trigger an immediate sync.
+     * The user-facing "Sync now" path: ensures the Google Sheet ends
+     * up with a complete snapshot of items + purchase history, even
+     * the rows that were synced previously and would otherwise be
+     * skipped by the incremental worker.
+     *
+     * Suspending so callers can chain the DB writes — the network
+     * push happens off-thread inside [SyncWorker].
+     */
+    suspend fun requestFullSync() {
+        itemRepo.markAllPendingSync()
+        purchaseRepo.markAllPendingSync()
+        requestImmediateSync()
+    }
+
+    /**
      * Server health check. Returns Ok on `{ ok: true }` or Err on any
      * network / parse problem. Used by Settings -> "Test connection".
      */
