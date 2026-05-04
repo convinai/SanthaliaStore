@@ -6,7 +6,7 @@
         launcher window matches the in-app palette before Compose has
         had a chance to set the system bars.
     -->
-    <style name="Theme.SanthaliaRateCard" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.SanthaliaRateCard" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:statusBarColor">@color/md_background_light</item>
         <item name="android:navigationBarColor">@color/md_background_light</item>
         <item name="android:windowLightStatusBar">true</item>

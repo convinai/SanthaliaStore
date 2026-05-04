@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.SanthaliaRateCard" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.SanthaliaRateCard" parent="android:Theme.Material.NoActionBar">
         <item name="android:statusBarColor">@color/md_background_dark</item>
         <item name="android:navigationBarColor">@color/md_background_dark</item>
         <item name="android:windowLightStatusBar">false</item>
