@@ -28,7 +28,8 @@ app/src/test/java/in/santhaliastore/ratecard/
 ├── data/repo/
 │   └── FtsQueryTest.kt      # FTS4 prefix-query escape rules
 └── sync/
-    └── SyncDtosTest.kt      # Moshi round-trip for every sync action
+    ├── SyncDtosTest.kt      # Moshi round-trip for every sync action
+    └── AppsScriptApiTest.kt # Retrofit interface installs cleanly + envelope() shape
 ```
 
 These are pure JVM tests — they run on the host JDK with no emulator,
@@ -86,6 +87,8 @@ adding new behaviour.
 | Sync DTOs | `upsertEntry` field names match Apps Script contract | SyncDtosTest |
 | Sync DTOs | `bulkSync` exposes 4 arrays | SyncDtosTest |
 | Sync DTOs | response parses with / without `errors` | SyncDtosTest |
+| Sync API | Retrofit can install the interface (no wildcard / annotation regression) | AppsScriptApiTest |
+| Sync API | `envelope()` builds correct JSON for `health`, `upsertItem`, `bulkSync` | AppsScriptApiTest |
 
 ## Manual smoke checklist
 

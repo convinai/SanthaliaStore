@@ -108,7 +108,8 @@ class SyncRepository(
     suspend fun ping(): AppResult<Unit> = appResultOf {
         val url = settings.sheetUrl.first()
         require(url.isNotBlank()) { "Sheet URL not set" }
-        val response = apiFactory().call(url, SyncRequest("health", HealthPayload()))
+        val body = AppsScriptApi.envelope("health", HealthPayload())
+        val response = apiFactory().call(url, body)
         require(response.ok) { "Server says not ok" }
         Unit
     }
@@ -178,7 +179,8 @@ class SyncRepository(
                 deletedEntries = deletedEntriesBatch
             )
 
-            val response = apiFactory().call(url, SyncRequest("bulkSync", payload))
+            val body = AppsScriptApi.envelope("bulkSync", payload)
+            val response = apiFactory().call(url, body)
             if (!response.ok) {
                 val msg = response.errors?.firstOrNull()?.message ?: "Server returned not ok"
                 throw IllegalStateException(msg)
