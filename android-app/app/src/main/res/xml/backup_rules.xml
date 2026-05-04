@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pre-Android-12 full-backup config. Same intent as the v31 rules. -->
+<full-backup-content>
+    <include domain="database" path="ratecard.db" />
+    <include domain="database" path="ratecard.db-shm" />
+    <include domain="database" path="ratecard.db-wal" />
+    <include domain="file" path="datastore/" />
+</full-backup-content>

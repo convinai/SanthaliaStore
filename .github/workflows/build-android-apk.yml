@@ -1,0 +1,58 @@
+name: Build APK
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'android-app/**'
+      - '.github/workflows/build-android-apk.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'android-app/**'
+      - '.github/workflows/build-android-apk.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: build-android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Make gradlew executable
+        run: chmod +x ./android-app/gradlew
+
+      - name: Build debug APK
+        working-directory: ./android-app
+        env:
+          GRADLE_OPTS: -Xmx4g -Dorg.gradle.daemon=false
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: santhalia-rate-card-debug-apk-${{ github.sha }}
+          path: android-app/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+          if-no-files-found: error

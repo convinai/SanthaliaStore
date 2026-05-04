@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+*.swp
+
+# Android / Gradle
+*.iml
+.gradle/
+local.properties
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.keystore
+*.jks
+release/
+
+# IntelliJ / Android Studio
+.idea/
+
+# Node (future-proofing)
+node_modules/
+
+# Logs
+*.log

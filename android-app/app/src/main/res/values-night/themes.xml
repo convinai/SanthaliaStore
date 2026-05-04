@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.SanthaliaRateCard" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:statusBarColor">@color/md_background_dark</item>
+        <item name="android:navigationBarColor">@color/md_background_dark</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowBackground">@color/md_background_dark</item>
+    </style>
+
+    <style name="Theme.SanthaliaRateCard.Splash" parent="Theme.SanthaliaRateCard">
+        <item name="android:windowBackground">@drawable/splash_background_dark</item>
+    </style>
+</resources>

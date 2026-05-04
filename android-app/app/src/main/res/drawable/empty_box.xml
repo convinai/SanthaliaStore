@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Empty-state illustration: a softly-coloured open cardboard box.
+    Pure vector so it scales crisp on any density without bitmap weight.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="160dp"
+    android:height="160dp"
+    android:viewportWidth="160"
+    android:viewportHeight="160">
+
+    <!-- Box back / shadow -->
+    <path
+        android:fillColor="#FFE0AE"
+        android:pathData="M40,72 L120,72 L120,124 L40,124 Z" />
+
+    <!-- Box front face -->
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M40,72 L120,72 L114,124 L46,124 Z" />
+
+    <!-- Open flaps -->
+    <path
+        android:fillColor="#FFB870"
+        android:strokeColor="#92400E"
+        android:strokeWidth="1.2"
+        android:pathData="M40,72 L34,52 L80,40 L120,72 Z" />
+
+    <path
+        android:fillColor="#FFC889"
+        android:strokeColor="#92400E"
+        android:strokeWidth="1.2"
+        android:pathData="M120,72 L132,52 L80,40 L120,72 Z" />
+
+    <!-- Tape strip across the front -->
+    <path
+        android:fillColor="#92400E"
+        android:fillAlpha="0.18"
+        android:pathData="M76,72 L86,72 L84,124 L78,124 Z" />
+
+    <!-- Soft floor shadow -->
+    <path
+        android:fillColor="#000000"
+        android:fillAlpha="0.07"
+        android:pathData="M30,128 Q80,134 130,128 Q80,140 30,128 Z" />
+</vector>

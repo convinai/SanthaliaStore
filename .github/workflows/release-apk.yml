@@ -1,0 +1,76 @@
+name: Release APK
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name to release (e.g. v1.0.0)'
+        required: true
+        type: string
+
+concurrency:
+  group: release-apk-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve tag name
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ github.event.inputs.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up JDK 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Make gradlew executable
+        run: chmod +x ./android-app/gradlew
+
+      # TODO: Once a RELEASE_KEYSTORE secret (and signing config) is added,
+      # swap `assembleDebug` below for `assembleRelease` and source the
+      # keystore from secrets. Until then we ship the debug-signed APK so
+      # non-technical users can side-load it.
+      - name: Build APK
+        working-directory: ./android-app
+        env:
+          GRADLE_OPTS: -Xmx4g -Dorg.gradle.daemon=false
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK for release
+        run: |
+          mkdir -p release-artifacts
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk \
+             "release-artifacts/santhalia-rate-card-${{ steps.tag.outputs.name }}.apk"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: Santhalia Rate Card ${{ steps.tag.outputs.name }}
+          generate_release_notes: true
+          files: release-artifacts/santhalia-rate-card-${{ steps.tag.outputs.name }}.apk

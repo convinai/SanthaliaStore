@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- App identity -->
+    <string name="app_name">Santhalia Rate Card</string>
+    <string name="app_tagline">Apni dukaan ka rate card</string>
+
+    <!-- Common actions -->
+    <string name="action_save">Save karein</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_delete">Delete karein</string>
+    <string name="action_edit">Edit karein</string>
+    <string name="action_back">Wapas</string>
+    <string name="action_more">Aur options</string>
+    <string name="action_retry">Phir try karein</string>
+    <string name="action_ok">OK</string>
+
+    <!-- Home screen -->
+    <string name="home_title">Items</string>
+    <string name="home_search_hint">Item code ya naam search karein</string>
+    <string name="home_fab_add_item">Item add karein</string>
+    <string name="home_empty_title">Abhi koi item nahi hai</string>
+    <string name="home_empty_caption">Pehla item add karein!</string>
+    <string name="home_no_results">Koi item match nahi hua. Search badal kar dekhein.</string>
+
+    <!-- Item row labels -->
+    <string name="last_rate_format">₹%1$s / %2$s</string>
+    <string name="last_rate_no_unit_format">₹%1$s</string>
+    <string name="no_purchase_yet">Abhi koi rate nahi</string>
+
+    <!-- Item detail -->
+    <string name="item_detail_history_title">Purchase history</string>
+    <string name="item_detail_empty_title">Koi purchase entry nahi</string>
+    <string name="item_detail_empty_caption">Is item ke liye abhi koi purchase entry nahi hai.</string>
+    <string name="item_detail_fab_add_entry">Entry add karein</string>
+    <string name="item_detail_last_rate_label">Aakhri rate</string>
+    <string name="item_detail_unit_label">Unit</string>
+    <string name="item_detail_code_label">Code</string>
+
+    <!-- Add / Edit item -->
+    <string name="add_item_title">Naya item</string>
+    <string name="edit_item_title">Item edit karein</string>
+    <string name="field_item_code">Item code</string>
+    <string name="field_item_code_helper">Chhota unique code (jaise ATA, RICE5)</string>
+    <string name="field_item_name">Item ka naam</string>
+    <string name="field_item_name_helper">Aap kaise pehchaante hain</string>
+    <string name="field_item_unit">Unit (optional)</string>
+    <string name="field_item_unit_helper">Jaise Kg, Litre, Adad</string>
+    <string name="error_code_empty">Code zaroori hai</string>
+    <string name="error_code_duplicate">Yeh code already use ho raha hai</string>
+    <string name="error_name_empty">Naam zaroori hai</string>
+
+    <!-- Add / Edit purchase entry -->
+    <string name="add_entry_title">Naya purchase entry</string>
+    <string name="edit_entry_title">Entry edit karein</string>
+    <string name="field_entry_date">Date</string>
+    <string name="field_entry_price">Price per unit (₹)</string>
+    <string name="field_entry_quantity">Quantity (optional)</string>
+    <string name="field_entry_supplier">Supplier (optional)</string>
+    <string name="field_entry_notes">Notes (optional)</string>
+    <string name="error_price_invalid">Sahi price daalein</string>
+    <string name="error_date_invalid">Date select karein</string>
+
+    <!-- Delete confirm -->
+    <string name="delete_item_title">Delete karein?</string>
+    <string name="delete_item_message">Yeh item aur uski saari purchase history hat jaayegi. Yeh wapas nahi aayega.</string>
+    <string name="delete_entry_title">Delete karein?</string>
+    <string name="delete_entry_message">Yeh purchase entry hat jaayegi. Yeh wapas nahi aayega.</string>
+
+    <!-- Sync messages -->
+    <string name="sync_status_synced">Sync ho gaya</string>
+    <string name="sync_status_pending">Sync baaki hai</string>
+    <string name="sync_status_in_progress">Sync ho raha hai…</string>
+    <string name="sync_status_offline">Internet connect karein</string>
+    <string name="sync_status_error">Sync error</string>
+    <string name="sync_last_synced_format">Last sync: %1$s</string>
+    <string name="sync_never">Abhi tak sync nahi hua</string>
+    <string name="sync_now">Abhi sync karein</string>
+    <string name="sync_test_connection">Connection test karein</string>
+    <string name="sync_test_ok">Connection theek hai</string>
+    <string name="sync_test_failed">Connection nahi laga: %1$s</string>
+    <string name="sync_url_invalid">Sahi URL daalein</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_section_sync">Sync settings</string>
+    <string name="settings_sheet_url">Google Sheet URL</string>
+    <string name="settings_sheet_url_helper">Apps Script web app URL</string>
+    <string name="settings_section_lock">Lock</string>
+    <string name="settings_pin_enabled">PIN lock chalu</string>
+    <string name="settings_pin_enabled_caption">App khulte hi 4-digit PIN puchhega</string>
+    <string name="settings_pin_change">PIN badlein</string>
+    <string name="settings_pin_set">PIN set karein</string>
+    <string name="settings_section_about">Baare mein</string>
+    <string name="settings_about_version_format">Version %1$s</string>
+    <string name="settings_about_made_for">Bana hai Santhalia Store ke liye</string>
+
+    <!-- Lock screen -->
+    <string name="lock_title">PIN daalein</string>
+    <string name="lock_set_title">Naya PIN set karein</string>
+    <string name="lock_confirm_title">PIN dobara daalein</string>
+    <string name="lock_caption">4 digit ka PIN</string>
+    <string name="lock_error_wrong">Galat PIN, phir try karein</string>
+    <string name="lock_error_mismatch">Dono PIN match nahi ho rahe</string>
+
+    <!-- Toasts / snackbars -->
+    <string name="toast_item_saved">Item save ho gaya</string>
+    <string name="toast_item_deleted">Item hat gaya</string>
+    <string name="toast_entry_saved">Entry save ho gayi</string>
+    <string name="toast_entry_deleted">Entry hat gayi</string>
+    <string name="toast_settings_saved">Settings save ho gayi</string>
+
+    <!-- Default kirana units (used as suggestions in unit dropdown) -->
+    <string-array name="kirana_units">
+        <item>Kg</item>
+        <item>Gram</item>
+        <item>Litre</item>
+        <item>ML</item>
+        <item>Adad (Piece)</item>
+        <item>Packet</item>
+        <item>Dozen</item>
+        <item>Bori (Sack)</item>
+        <item>Peti (Box)</item>
+        <item>Bundle</item>
+        <item>Patta (Strip)</item>
+        <item>Crate</item>
+    </string-array>
+
+    <!-- Relative time strings (used by util/Time.kt) -->
+    <string name="time_just_now">abhi abhi</string>
+    <string name="time_minutes_ago_format">%1$d minute pehle</string>
+    <string name="time_hour_ago">1 ghante pehle</string>
+    <string name="time_hours_ago_format">%1$d ghante pehle</string>
+    <string name="time_yesterday">kal</string>
+    <string name="time_days_ago_format">%1$d din pehle</string>
+    <string name="time_weeks_ago_format">%1$d hafte pehle</string>
+    <string name="time_months_ago_format">%1$d mahine pehle</string>
+    <string name="time_years_ago_format">%1$d saal pehle</string>
+
+    <!-- Generic empty / error -->
+    <string name="generic_error">Kuch gadbad ho gayi. Phir try karein.</string>
+    <string name="loading">Load ho raha hai…</string>
+</resources>

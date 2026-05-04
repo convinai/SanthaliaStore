@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Saffron / marigold inspired Material 3 palette.
+        Anchored on amber-700 (#D97706) — warm, festive, distinctly Indian
+        without being aggressive. Generated to satisfy WCAG AA on primary
+        surfaces.
+    -->
+
+    <!-- Brand seed -->
+    <color name="brand_saffron">#D97706</color>
+    <color name="brand_marigold">#F59E0B</color>
+    <color name="brand_deep">#92400E</color>
+
+    <!-- Light scheme tokens -->
+    <color name="md_primary_light">#B45309</color>
+    <color name="md_on_primary_light">#FFFFFF</color>
+    <color name="md_primary_container_light">#FFE0B2</color>
+    <color name="md_on_primary_container_light">#3B1F00</color>
+
+    <color name="md_secondary_light">#7C5800</color>
+    <color name="md_on_secondary_light">#FFFFFF</color>
+    <color name="md_secondary_container_light">#FFE0AE</color>
+    <color name="md_on_secondary_container_light">#271900</color>
+
+    <color name="md_tertiary_light">#3F6B3B</color>
+    <color name="md_on_tertiary_light">#FFFFFF</color>
+    <color name="md_tertiary_container_light">#C0F1B6</color>
+    <color name="md_on_tertiary_container_light">#002203</color>
+
+    <color name="md_error_light">#B3261E</color>
+    <color name="md_on_error_light">#FFFFFF</color>
+    <color name="md_error_container_light">#F9DEDC</color>
+    <color name="md_on_error_container_light">#410E0B</color>
+
+    <color name="md_background_light">#FFFBF5</color>
+    <color name="md_on_background_light">#1F1B16</color>
+    <color name="md_surface_light">#FFFBF5</color>
+    <color name="md_on_surface_light">#1F1B16</color>
+    <color name="md_surface_variant_light">#F1E0CB</color>
+    <color name="md_on_surface_variant_light">#504539</color>
+    <color name="md_outline_light">#82766A</color>
+
+    <!-- Dark scheme tokens -->
+    <color name="md_primary_dark">#FFB870</color>
+    <color name="md_on_primary_dark">#4A2800</color>
+    <color name="md_primary_container_dark">#6A3C00</color>
+    <color name="md_on_primary_container_dark">#FFDDB8</color>
+
+    <color name="md_secondary_dark">#F0BF6E</color>
+    <color name="md_on_secondary_dark">#412D00</color>
+    <color name="md_secondary_container_dark">#5E4200</color>
+    <color name="md_on_secondary_container_dark">#FFDEAD</color>
+
+    <color name="md_tertiary_dark">#A4D49C</color>
+    <color name="md_on_tertiary_dark">#103E13</color>
+    <color name="md_tertiary_container_dark">#275625</color>
+    <color name="md_on_tertiary_container_dark">#C0F1B6</color>
+
+    <color name="md_error_dark">#F2B8B5</color>
+    <color name="md_on_error_dark">#601410</color>
+    <color name="md_error_container_dark">#8C1D18</color>
+    <color name="md_on_error_container_dark">#F9DEDC</color>
+
+    <color name="md_background_dark">#1F1B16</color>
+    <color name="md_on_background_dark">#EAE1D6</color>
+    <color name="md_surface_dark">#1F1B16</color>
+    <color name="md_on_surface_dark">#EAE1D6</color>
+    <color name="md_surface_variant_dark">#504539</color>
+    <color name="md_on_surface_variant_dark">#D4C5B5</color>
+    <color name="md_outline_dark">#9D9085</color>
+
+    <!-- Splash background — same as light primary container so the launch
+         feels seamless on cold start. -->
+    <color name="splash_background">#FFE0B2</color>
+</resources>

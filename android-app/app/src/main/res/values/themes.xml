@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Base Material 3 theme. The Compose layer overrides ColorScheme
+        from theme/Theme.kt — this XML theme exists primarily so the
+        launcher window matches the in-app palette before Compose has
+        had a chance to set the system bars.
+    -->
+    <style name="Theme.SanthaliaRateCard" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:statusBarColor">@color/md_background_light</item>
+        <item name="android:navigationBarColor">@color/md_background_light</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowBackground">@color/md_background_light</item>
+    </style>
+
+    <!--
+        Splash theme used as the launcher activity theme so the first
+        frame the user sees has our brand colour rather than a black
+        rectangle. We avoid the SplashScreen library to stay light.
+    -->
+    <style name="Theme.SanthaliaRateCard.Splash" parent="Theme.SanthaliaRateCard">
+        <item name="android:windowBackground">@drawable/splash_background</item>
+    </style>
+</resources>

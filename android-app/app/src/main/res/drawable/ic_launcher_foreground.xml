@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    "S" stylised mark on a transparent foreground for adaptive icons.
+    Stays well inside the 66dp safe zone (108dp canvas, content within
+    inner 72dp circle so launchers can crop freely).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Soft inner circle for visual weight on the saffron background -->
+    <path
+        android:fillColor="#FFFBF5"
+        android:pathData="M54,28 C40.7,28 30,38.7 30,52 C30,65.3 40.7,76 54,76 C67.3,76 78,65.3 78,52 C78,38.7 67.3,28 54,28 Z" />
+
+    <!-- Stylised "S" letter form -->
+    <path
+        android:fillColor="#92400E"
+        android:strokeColor="#92400E"
+        android:strokeWidth="1"
+        android:pathData="M64,42 Q64,38 60,38 L48,38 Q44,38 44,42 L44,46 Q44,50 48,50 L60,50 Q64,50 64,54 L64,62 Q64,66 60,66 L48,66 Q44,66 44,62" />
+</vector>

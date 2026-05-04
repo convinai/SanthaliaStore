@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android 12+ data-extraction rules. We allow cloud backup of the
+    user's preferences (sheet URL, PIN settings) and Room database
+    so a phone replacement does not lose the rate card.
+
+    Device-to-device transfer follows the same rules.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="database" path="ratecard.db" />
+        <include domain="database" path="ratecard.db-shm" />
+        <include domain="database" path="ratecard.db-wal" />
+        <include domain="file" path="datastore/" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="database" path="ratecard.db" />
+        <include domain="database" path="ratecard.db-shm" />
+        <include domain="database" path="ratecard.db-wal" />
+        <include domain="file" path="datastore/" />
+    </device-transfer>
+</data-extraction-rules>
