@@ -68,7 +68,10 @@ import `in`.santhaliastore.ratecard.util.Time
 @Composable
 fun AddEditItemScreen(
     editingCode: String?,
-    onDone: () -> Unit,
+    // Receives the post-save code (which may differ from `editingCode`
+    // on a rename). The navigator uses it to swap the stale Item Detail
+    // entry on the back stack for one anchored to the new code.
+    onDone: (savedCode: String) -> Unit,
     onBack: () -> Unit,
     viewModel: AddEditItemViewModel = viewModel(factory = AddEditItemViewModel.Factory)
 ) {
@@ -108,7 +111,7 @@ fun AddEditItemScreen(
     }
 
     LaunchedEffect(state.saved) {
-        if (state.saved) onDone()
+        if (state.saved) onDone(state.savedCode.orEmpty())
     }
 
     val units = stringArrayResource(R.array.kirana_units)

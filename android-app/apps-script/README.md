@@ -22,7 +22,7 @@ You only need to set this up **once**. After that, the phone takes care of every
 2. Click the big **+ Blank** card to create a new sheet.
 3. At the top-left, click the file name (it says *Untitled spreadsheet*) and rename it to **Santhalia Rate Card**.
 
-You do not need to add any tabs or columns by hand. The script will create the `Items` and `PurchaseEntries` tabs automatically the first time the phone syncs.
+You do not need to add any tabs or columns by hand. The script will create the `Items`, `PurchaseEntries` and `Crashes` tabs automatically the first time the phone syncs.
 
 ### 2. Open the Apps Script editor
 
@@ -127,6 +127,22 @@ The script auto-creates these tabs. You should not edit them by hand.
 | `notes` | TEXT (optional) | Free-form notes. |
 | `updatedAt` | TEXT (ISO 8601) | Last edit timestamp. |
 | `deleted` | TEXT (`TRUE`/`FALSE`) | Soft-delete flag. |
+
+### Tab: `Crashes`
+
+App ke andar koi crash hota hai toh phone us ka detail ek file mein save kar leta hai aur next sync pe is tab mein automatically chala jaata hai. Aap ko kuch karne ki zaroorat nahin — agar rows yahan dikhne lagein, ka matlab hai phone ne kuch crashes pakde hain. Developer ko sheet ka link bhej dijiye, woh `stackTrace` column dekh ke fix kar dega.
+
+| Column | Type | Notes |
+|---|---|---|
+| `crashId` | TEXT (UUID) | Unique key. Phone-side dedup so re-uploads don't double-row. |
+| `timestamp` | TEXT (ISO 8601) | When the crash happened, in UTC. |
+| `appVersion` | TEXT | App version name (e.g. `1.0.0`). |
+| `appVersionCode` | NUMBER | App version code from `BuildConfig`. |
+| `androidVersion` | TEXT | e.g. `13 (API 33)`. |
+| `deviceModel` | TEXT | e.g. `samsung SM-A125F`. |
+| `threadName` | TEXT | The thread that died. Usually `main`. |
+| `message` | TEXT | The exception's top-level message. |
+| `stackTrace` | TEXT | Full Java stack trace. Capped at 8 KB. |
 
 ---
 

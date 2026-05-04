@@ -10,6 +10,7 @@ import androidx.work.WorkManager
 import `in`.santhaliastore.ratecard.data.db.entity.ItemEntity
 import `in`.santhaliastore.ratecard.data.db.entity.PurchaseEntryEntity
 import `in`.santhaliastore.ratecard.data.prefs.SettingsRepository
+import `in`.santhaliastore.ratecard.data.repo.CrashRepository
 import `in`.santhaliastore.ratecard.data.repo.ItemRepository
 import `in`.santhaliastore.ratecard.data.repo.PurchaseRepository
 import `in`.santhaliastore.ratecard.util.AppResult
@@ -31,6 +32,7 @@ class SyncRepository(
     private val itemRepo: ItemRepository,
     private val purchaseRepo: PurchaseRepository,
     private val settings: SettingsRepository,
+    private val crashRepo: CrashRepository,
     private val apiFactory: () -> AppsScriptApi
 ) {
 
@@ -38,6 +40,9 @@ class SyncRepository(
         const val UNIQUE_WORK_NAME = "sync_pending"
         // The server caps a single bulkSync request at 200 changes.
         const val MAX_BATCH_SIZE = 200
+        // Apps Script `logCrashes` action's per-call cap. Keep in sync
+        // with the matching constant in apps-script/Code.gs.
+        const val MAX_CRASHES_PER_CALL = 50
     }
 
     /* --------------------------- public API ---------------------------- */
@@ -103,6 +108,15 @@ class SyncRepository(
         itemRepo.markAllPendingSync()
         purchaseRepo.markAllPendingSync()
         val outcome = pushAllPending()
+
+        // Drain any pending crash reports as a separate step. We
+        // explicitly do NOT fold the result into [outcome]: a crash
+        // upload failure should not undo a successful items/entries
+        // sync (or vice versa) — they're independent payloads with
+        // independent retry semantics, and conflating them would
+        // confuse the user-facing "Sync now" success/failure surface.
+        runCatching { pushPendingCrashes() }
+
         when (outcome) {
             is AppResult.Ok -> {
                 settings.setLastSyncedNow()
@@ -141,7 +155,14 @@ class SyncRepository(
 
         val items = itemRepo.pendingSync()
         val entries = purchaseRepo.pendingSync()
-        if (items.isEmpty() && entries.isEmpty()) return@appResultOf 0
+        if (items.isEmpty() && entries.isEmpty()) {
+            // Nothing data-shaped to push, but we may still have
+            // unsent crashes — ride the existing connectivity check
+            // and try to drain them. Failure is swallowed so the
+            // "nothing pending" success path stays clean.
+            runCatching { pushPendingCrashes() }
+            return@appResultOf 0
+        }
 
         val pendingItemUpserts = items.filter { !it.deleted }
         val pendingItemDeletes = items.filter { it.deleted }
@@ -216,7 +237,52 @@ class SyncRepository(
         if (syncedItemCodes.isNotEmpty()) itemRepo.clearPendingSync(syncedItemCodes)
         if (syncedEntryIds.isNotEmpty()) purchaseRepo.clearPendingSync(syncedEntryIds)
 
+        // Crashes ride along on the same successful-sync trigger but
+        // are pushed as a separate request so a crash-upload failure
+        // doesn't roll back the data sync we just completed. The
+        // failure (if any) is swallowed — we'll retry on the next
+        // sync, and the file stays on disk in the meantime.
+        runCatching { pushPendingCrashes() }
+
         processed
+    }
+
+    /**
+     * Drain `<filesDir>/crashes.log` to the Apps Script `Crashes` tab.
+     *
+     * Independent from item / entry sync:
+     *   - Caps at [MAX_CRASHES_PER_CALL] events per request — the
+     *     server enforces the same cap, but we mirror it here so we
+     *     never even make the call with too many.
+     *   - On HTTP 200 + `ok=true`, removes the uploaded crashIds from
+     *     the local file. If the file still has more (rare) the next
+     *     sync picks them up.
+     *   - On any failure (no URL, network, server not-ok) we leave
+     *     the file in place and surface the error via [AppResult.Err]
+     *     so the worker / Settings UI can log it.
+     *
+     * The Apps Script side is idempotent on `crashId`, so a duplicate
+     * upload (from a phone that thought it failed but the server
+     * actually got the request) is a no-op on the sheet.
+     */
+    suspend fun pushPendingCrashes(): AppResult<Int> = appResultOf {
+        val pending = crashRepo.pendingCrashes()
+        if (pending.isEmpty()) return@appResultOf 0
+
+        val url = settings.sheetUrl.first()
+        require(url.isNotBlank()) { "Sheet URL not set" }
+
+        val batch = pending.take(MAX_CRASHES_PER_CALL)
+        val payload = LogCrashesPayload(crashes = batch)
+        val body = AppsScriptApi.envelope("logCrashes", payload)
+        val response = apiFactory().call(url, body)
+        if (!response.ok) {
+            val msg = response.errors?.firstOrNull()?.message ?: "Server returned not ok"
+            throw IllegalStateException(msg)
+        }
+
+        crashRepo.clearUploaded(batch.map { it.crashId })
+        batch.size
     }
 
     /* ----------------------- entity -> DTO mappers --------------------- */

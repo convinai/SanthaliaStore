@@ -38,6 +38,10 @@
     <string name="item_detail_last_rate_label">Aakhri rate</string>
     <string name="item_detail_unit_label">Unit</string>
     <string name="item_detail_code_label">Code</string>
+    <!-- Shown when the Item Detail screen's code no longer points to a
+         live row (e.g. the item was renamed or deleted from elsewhere). -->
+    <string name="item_detail_missing_title">Yeh item ab nahi raha</string>
+    <string name="item_detail_missing_caption">Shayad code badal gaya hai ya item delete ho gaya hai. Home pe wapas jaayein.</string>
 
     <!-- Add / Edit item -->
     <string name="add_item_title">Naya item</string>
@@ -101,6 +105,10 @@
     <string name="settings_section_sync">Sync settings</string>
     <string name="settings_sheet_url">Google Sheet URL</string>
     <string name="settings_sheet_url_helper">Apps Script web app URL</string>
+    <string name="settings_sheet_url_set_label">Google Sheet</string>
+    <string name="settings_sheet_url_edit">URL badlein</string>
+    <string name="settings_sheet_url_save_first">URL pehle save karein</string>
+    <string name="settings_sheet_url_summary_status_format">Last sync: %1$s</string>
     <string name="settings_section_lock">Lock</string>
     <string name="settings_pin_enabled">PIN lock chalu</string>
     <string name="settings_pin_enabled_caption">App khulte hi 4-digit PIN puchhega</string>

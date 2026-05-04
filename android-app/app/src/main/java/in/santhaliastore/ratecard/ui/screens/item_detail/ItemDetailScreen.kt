@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -114,7 +115,7 @@ fun ItemDetailScreen(
                     }
                 },
                 actions = {
-                    if (state.item != null) {
+                    if (state.item != null && !state.isMissing) {
                         IconButton(onClick = { menuOpen = true }) {
                             Icon(
                                 Icons.Filled.MoreVert,
@@ -158,7 +159,11 @@ fun ItemDetailScreen(
             )
         },
         floatingActionButton = {
-            if (state.item != null) {
+            // Bug 1b guard: do NOT show the FAB when the item is
+            // missing or soft-deleted. A tap here would create an
+            // entry against a dead code that the live UI never reads,
+            // silently orphaning the entry.
+            if (state.item != null && !state.isMissing) {
                 ExtendedFloatingActionButton(
                     onClick = onAddEntry,
                     icon = { Icon(Icons.Filled.Add, contentDescription = null) },
@@ -174,11 +179,14 @@ fun ItemDetailScreen(
             return@Scaffold
         }
 
-        if (state.item == null) {
-            // Item missing — likely just deleted. Bounce back.
+        if (state.isMissing) {
+            // Item missing or soft-deleted — likely the user just
+            // renamed its code from a different surface or deleted it.
+            // Show a clear "yeh item ab nahi raha" message so the user
+            // knows to go home rather than staring at a blank list.
             EmptyStateInline(
-                title = stringResource(R.string.generic_error),
-                caption = stringResource(R.string.item_detail_empty_caption),
+                title = stringResource(R.string.item_detail_missing_title),
+                caption = stringResource(R.string.item_detail_missing_caption),
                 modifier = Modifier.padding(padding)
             )
             return@Scaffold
@@ -286,6 +294,9 @@ private fun HeaderCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier
+                        // Cap the chip width so a long code doesn't push
+                        // the name off the right edge of the card.
+                        .widthIn(max = 120.dp)
                         .background(
                             color = MaterialTheme.colorScheme.primary,
                             shape = RoundedCornerShape(8.dp)
@@ -298,7 +309,9 @@ private fun HeaderCard(
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.SemiBold
                         ),
-                        color = MaterialTheme.colorScheme.onPrimary
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                 }
                 Spacer(Modifier.width(12.dp))
@@ -306,7 +319,9 @@ private fun HeaderCard(
                     text = item.name,
                     style = MaterialTheme.typography.headlineSmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    maxLines = 2
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
             }
 
@@ -315,7 +330,9 @@ private fun HeaderCard(
                 Text(
                     text = "${stringResource(R.string.item_detail_unit_label)}: ${item.unit}",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
             }
 
@@ -332,7 +349,10 @@ private fun HeaderCard(
                     Text(
                         text = Money.rupees(latestPrice),
                         style = MaterialTheme.typography.displayMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                     if (!item.unit.isNullOrBlank()) {
                         Spacer(Modifier.width(6.dp))
@@ -340,6 +360,8 @@ private fun HeaderCard(
                             text = "/ ${item.unit}",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                             modifier = Modifier.padding(bottom = 6.dp)
                         )
                     }
@@ -390,7 +412,9 @@ private fun EntryRow(
                 Text(
                     text = Time.displayDate(entry.date),
                     style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
@@ -399,7 +423,9 @@ private fun EntryRow(
                     else Money.rupees(entry.pricePerUnit),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
                 val secondary = buildList {
                     entry.quantity?.let { add("Qty: ${Money.plain(it)}") }
@@ -410,7 +436,9 @@ private fun EntryRow(
                     Text(
                         text = secondary.joinToString(" • "),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                 }
                 if (!entry.notes.isNullOrBlank()) {
@@ -419,7 +447,8 @@ private fun EntryRow(
                         text = entry.notes,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                 }
             }

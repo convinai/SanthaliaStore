@@ -72,7 +72,9 @@ fun AppNavigation(
         composable(Routes.AddItem) {
             AddEditItemScreen(
                 editingCode = null,
-                onDone = { navController.popBackStack() },
+                // Add flow: there's no Item Detail upstream to redirect
+                // to, so just unwind to Home. The savedCode is unused.
+                onDone = { _ -> navController.popBackStack() },
                 onBack = { navController.popBackStack() }
             )
         }
@@ -86,7 +88,40 @@ fun AppNavigation(
                 .orEmpty()
             AddEditItemScreen(
                 editingCode = code,
-                onDone = { navController.popBackStack() },
+                // Edit flow: the user came from an Item Detail anchored
+                // to `code`. If they renamed the item the saved code
+                // differs, and the Item Detail behind us is now stale
+                // (its route arg is the old, now-tombstoned code).
+                //
+                // Pop both this Edit screen AND the stale Item Detail
+                // off the back stack, then push a fresh Item Detail at
+                // the new code. The user lands on a screen that
+                // actually points at their renamed row.
+                //
+                // If the code is unchanged (e.g. user only edited the
+                // name), a plain pop is enough — the Item Detail
+                // upstream re-observes its row reactively.
+                onDone = { savedCode ->
+                    if (savedCode.isNotEmpty() && savedCode != code) {
+                        navController.navigate(Routes.itemDetail(savedCode)) {
+                            // Drop everything up to and including the
+                            // stale Item Detail so back-press from the
+                            // new detail goes to Home, not to a dead
+                            // detail page.
+                            //
+                            // popUpTo matches against destination route
+                            // *patterns*, not substituted paths — so we
+                            // pop by `ItemDetailPattern`. There is only
+                            // ever one Item Detail in the back stack at
+                            // this point (this Edit screen is its
+                            // direct child) so popping the pattern is
+                            // exactly the stale entry we want to drop.
+                            popUpTo(Routes.ItemDetailPattern) { inclusive = true }
+                        }
+                    } else {
+                        navController.popBackStack()
+                    }
+                },
                 onBack = { navController.popBackStack() }
             )
         }

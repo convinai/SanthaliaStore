@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -15,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -50,6 +52,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -79,6 +82,9 @@ fun SettingsScreen(
 
     var sheetUrlField by rememberSaveable { mutableStateOf("") }
     var seededUrl by rememberSaveable { mutableStateOf(false) }
+    // Tracks whether the user has tapped the pencil to re-edit a saved URL.
+    // Lives in the screen, not the VM — see spec.
+    var editingUrl by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(state.sheetUrl) {
         // Seed once when DataStore returns its first value.
@@ -145,25 +151,91 @@ fun SettingsScreen(
         ) {
             SectionTitle(stringResource(R.string.settings_section_sync))
 
-            OutlinedTextField(
-                value = sheetUrlField,
-                onValueChange = {
-                    sheetUrlField = it
-                    viewModel.setSheetUrl(it)
-                    viewModel.clearTestResult()
-                },
-                label = { Text(stringResource(R.string.settings_sheet_url)) },
-                supportingText = { Text(stringResource(R.string.settings_sheet_url_helper)) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Uri,
-                    imeAction = ImeAction.Done
-                ),
-                modifier = Modifier.fillMaxWidth()
-            )
+            // Pre-compute the human-friendly last-sync string once: it's
+            // used both inside the summary card and as a standalone line
+            // when the editor is open.
+            val lastSyncText = if (state.lastSyncedAt > 0L) {
+                stringResource(
+                    R.string.sync_last_synced_format,
+                    DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                        .format(Date(state.lastSyncedAt))
+                )
+            } else {
+                stringResource(R.string.sync_never)
+            }
 
-            Spacer(Modifier.height(8.dp))
+            // ----- Group 1: URL block (collapsed summary OR editable field) -----
+            val hasSavedUrl = state.sheetUrl.isNotBlank()
+            val showEditor = !hasSavedUrl || editingUrl
 
+            if (!showEditor) {
+                SheetUrlSummaryCard(
+                    url = state.sheetUrl,
+                    statusText = lastSyncText,
+                    onEdit = {
+                        // Pre-fill the editor with the currently-saved URL
+                        // so the user can tweak instead of retyping.
+                        sheetUrlField = state.sheetUrl
+                        editingUrl = true
+                    }
+                )
+            } else {
+                OutlinedTextField(
+                    value = sheetUrlField,
+                    onValueChange = {
+                        sheetUrlField = it
+                        viewModel.clearTestResult()
+                    },
+                    label = { Text(stringResource(R.string.settings_sheet_url)) },
+                    supportingText = { Text(stringResource(R.string.settings_sheet_url_helper)) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Uri,
+                        imeAction = ImeAction.Done
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            viewModel.setSheetUrl(sheetUrlField)
+                            // Only collapse back to summary if the user
+                            // actually saved something. A blank save just
+                            // keeps the editor open in "no URL yet" mode.
+                            if (sheetUrlField.isNotBlank()) {
+                                editingUrl = false
+                            }
+                        },
+                        enabled = sheetUrlField.isNotBlank()
+                    ) {
+                        Text(stringResource(R.string.action_save))
+                    }
+                    // Cancel only makes sense when there's already a saved
+                    // URL to fall back to — otherwise there's nothing to
+                    // cancel into.
+                    if (hasSavedUrl) {
+                        OutlinedButton(
+                            onClick = {
+                                sheetUrlField = state.sheetUrl
+                                editingUrl = false
+                                viewModel.clearTestResult()
+                            }
+                        ) {
+                            Text(stringResource(R.string.action_cancel))
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // ----- Group 2: action buttons (always visible) -----
+            // Disabled when no URL is saved yet — they'd just no-op.
+            val urlSaved = state.sheetUrl.isNotBlank()
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -171,7 +243,7 @@ fun SettingsScreen(
                 Button(
                     onClick = { viewModel.syncNow() },
                     modifier = Modifier.weight(1f),
-                    enabled = !state.syncing
+                    enabled = urlSaved && !state.syncing
                 ) {
                     if (state.syncing) {
                         CircularProgressIndicator(
@@ -185,7 +257,7 @@ fun SettingsScreen(
                 OutlinedButton(
                     onClick = { viewModel.testConnection() },
                     modifier = Modifier.weight(1f),
-                    enabled = !state.testingConnection && !state.syncing
+                    enabled = urlSaved && !state.testingConnection && !state.syncing
                 ) {
                     if (state.testingConnection) {
                         CircularProgressIndicator(
@@ -196,6 +268,16 @@ fun SettingsScreen(
                         Text(stringResource(R.string.sync_test_connection))
                     }
                 }
+            }
+
+            // Soft caption explaining WHY the buttons are greyed.
+            if (!urlSaved) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = stringResource(R.string.settings_sheet_url_save_first),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
 
             // Test result (separate from sync result).
@@ -211,8 +293,9 @@ fun SettingsScreen(
                 null -> Unit
             }
 
-            // Pending count — tells the user what the next sync will push.
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(16.dp))
+
+            // ----- Group 3: pending count -----
             val pendingText = if (state.pendingCount > 0) {
                 stringResource(R.string.sync_pending_format, state.pendingCount)
             } else {
@@ -224,27 +307,10 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            // Last synced.
-            Spacer(Modifier.height(4.dp))
-            val lastSyncText = if (state.lastSyncedAt > 0L) {
-                stringResource(
-                    R.string.sync_last_synced_format,
-                    DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-                        .format(Date(state.lastSyncedAt))
-                )
-            } else {
-                stringResource(R.string.sync_never)
-            }
-            Text(
-                text = lastSyncText,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            // Last sync error in red (if any), verbatim.
+            // ----- Group 4: last sync error (if any) -----
             val lastError = state.lastSyncError
             if (!lastError.isNullOrBlank()) {
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(8.dp))
                 Text(
                     text = stringResource(R.string.sync_last_error_format, lastError),
                     style = MaterialTheme.typography.bodySmall,
@@ -252,9 +318,8 @@ fun SettingsScreen(
                 )
             }
 
-            // "View details" — opens a dialog with the same info, useful
-            // when error text overflows or the user wants to copy it.
-            Spacer(Modifier.height(4.dp))
+            // ----- Group 5: details affordance -----
+            Spacer(Modifier.height(8.dp))
             TextButton(onClick = { showSyncDetails = true }) {
                 Text(stringResource(R.string.sync_view_details))
             }
@@ -366,6 +431,72 @@ private fun SectionTitle(label: String) {
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
     )
+}
+
+/**
+ * Compact, read-only summary of the saved Google Sheet URL.
+ *
+ * Layout: a single Card with the label, the URL (truncated with
+ * ellipsis so the host stays visible) + a pencil edit affordance,
+ * and a status line showing the last sync time.
+ *
+ * The URL Text is the only weight=1f sibling of the IconButton so
+ * very long Apps Script URLs (~110 chars) cannot push the pencil
+ * off the edge of the screen.
+ */
+@Composable
+private fun SheetUrlSummaryCard(
+    url: String,
+    statusText: String,
+    onEdit: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                text = stringResource(R.string.settings_sheet_url_set_label),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(4.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = url,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                // 44 dp hit target (Material's IconButton is 48 dp by
+                // default — well above the 44 dp guideline).
+                IconButton(
+                    onClick = onEdit,
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Edit,
+                        contentDescription = stringResource(R.string.settings_sheet_url_edit),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = statusText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
 }
 
 @Composable

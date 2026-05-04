@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Round-launcher variant — same content as ic_launcher.xml. Launchers
+    apply their own circular mask, so we don't need to pre-clip anything.
+    The <monochrome> entry is intentionally omitted; see ic_launcher.xml.
+-->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@drawable/ic_launcher_background" />
     <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
 </adaptive-icon>

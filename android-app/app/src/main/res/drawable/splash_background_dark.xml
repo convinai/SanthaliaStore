@@ -1,8 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Dark-mode splash window background. Same approach as the light variant
+    — the full launcher icon (saffron + white S) reads cleanly on the dark
+    surface, and avoids the white-on-dark-but-still-low-contrast trap of
+    rendering the bare foreground.
+-->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@color/md_background_dark" />
     <item
-        android:drawable="@drawable/ic_launcher_foreground"
+        android:drawable="@mipmap/ic_launcher"
         android:gravity="center"
         android:width="120dp"
         android:height="120dp" />

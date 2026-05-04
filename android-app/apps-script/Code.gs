@@ -5,9 +5,10 @@
  * "Santhalia Rate Card" Android app. The Android app stores all
  * data locally (SQLite/Room) and periodically POSTs changes here.
  *
- * Two tabs are auto-created in the bound spreadsheet:
+ * Three tabs are auto-created in the bound spreadsheet:
  *   - Items            (rate card items)
  *   - PurchaseEntries  (price history per item, per date)
+ *   - Crashes          (uncaught-exception reports from the phone)
  *
  * Sync model:
  *   - Last-write-wins by `updatedAt` (ISO 8601 string)
@@ -23,6 +24,7 @@ const SCHEMA_VERSION = 1;
 // --- Sheet/tab names and headers (the source of truth for column order) ---
 const ITEMS_SHEET = 'Items';
 const ENTRIES_SHEET = 'PurchaseEntries';
+const CRASHES_SHEET = 'Crashes';
 
 const ITEMS_HEADERS = ['code', 'name', 'unit', 'updatedAt', 'deleted'];
 const ENTRIES_HEADERS = [
@@ -36,10 +38,28 @@ const ENTRIES_HEADERS = [
   'updatedAt',
   'deleted'
 ];
+// Crash log columns — order MUST match the Android CrashEvent DTO
+// field order so the sheet stays readable even when columns are
+// auto-created. crashId is the dedup key (first column).
+const CRASHES_HEADERS = [
+  'crashId',
+  'timestamp',
+  'appVersion',
+  'appVersionCode',
+  'androidVersion',
+  'deviceModel',
+  'threadName',
+  'message',
+  'stackTrace'
+];
 
 // Hard limit on a single bulkSync payload. Apps Script has a 6 minute
 // execution cap; 200 rows finishes well within that even on a cold start.
 const BULK_LIMIT = 200;
+// Hard limit on a single logCrashes payload. The phone caps itself at
+// 50 too; if the device has ever produced more than 50 crashes between
+// syncs, the user has bigger problems than a slow sheet write.
+const CRASHES_LIMIT = 50;
 
 // How long to wait for the script lock (concurrent writes from multiple
 // phones are possible). 30s is long enough to ride out a normal sync.
@@ -95,6 +115,7 @@ function doPost(e) {
       case 'upsertEntry':  return handleUpsertEntry_(payload);
       case 'deleteEntry':  return handleDeleteEntry_(payload);
       case 'bulkSync':     return handleBulkSync_(payload);
+      case 'logCrashes':   return handleLogCrashes_(payload);
       default:
         return jsonResponse_({
           ok: false,
@@ -312,6 +333,56 @@ function handleBulkSync_(payload) {
 }
 
 
+/**
+ * Crash log appender. Accepts up to CRASHES_LIMIT crash events and
+ * writes them to the `Crashes` tab. Idempotent on `crashId` — if a
+ * row with the same crashId already exists we leave it alone (a
+ * re-upload from a phone that thought the previous call failed is
+ * a no-op, so the user never sees duplicate crash rows).
+ *
+ * Each crash row carries the full stack trace (already truncated to
+ * 8 KB on the phone) so the shop owner can show the sheet to a
+ * developer without exporting anything.
+ */
+function handleLogCrashes_(payload) {
+  const crashes = Array.isArray(payload && payload.crashes) ? payload.crashes : [];
+
+  if (crashes.length > CRASHES_LIMIT) {
+    return jsonResponse_({
+      ok: false,
+      action: 'logCrashes',
+      processed: 0,
+      errors: [{
+        index: -1,
+        key: '',
+        message: 'Too many crashes in one logCrashes (' + crashes.length + '). Max allowed is ' + CRASHES_LIMIT + '.'
+      }],
+      time: new Date().toISOString()
+    });
+  }
+
+  const errors = [];
+  let processed = 0;
+
+  withLock_(function () {
+    const ctx = loadSheetContext_(CRASHES_SHEET, CRASHES_HEADERS);
+    for (let i = 0; i < crashes.length; i++) {
+      const r = upsertCrashInMemory_(ctx, crashes[i], i);
+      if (r.error) errors.push(r.error); else processed++;
+    }
+    flushSheet_(ctx);
+  });
+
+  return jsonResponse_({
+    ok: errors.length === 0,
+    action: 'logCrashes',
+    processed: processed,
+    errors: errors.length ? errors : undefined,
+    time: new Date().toISOString()
+  });
+}
+
+
 /* =========================================================================
  *  IN-MEMORY UPSERT / DELETE LOGIC
  *
@@ -466,6 +537,54 @@ function softDeleteInMemory_(ctx, keyName, payload, index) {
       error: {
         index: index,
         key: (payload && payload[keyName]) ? String(payload[keyName]) : '',
+        message: err && err.message ? err.message : String(err)
+      }
+    };
+  }
+}
+
+
+/**
+ * Append a crash record. Dedup is by `crashId` (first column).
+ *
+ * Unlike items / entries we do NOT overwrite on conflict — a crash
+ * record is immutable history. If the same crashId is already on
+ * the sheet the call is a no-op (still counts as processed so the
+ * phone clears its local copy).
+ */
+function upsertCrashInMemory_(ctx, payload, index) {
+  try {
+    const crashId = requireString_(payload && payload.crashId, 'crashId');
+
+    if (ctx.keyMap.has(crashId)) {
+      // Already logged — idempotent no-op. We still report success
+      // so the phone removes the line from its local crashes.log.
+      return { ok: true };
+    }
+
+    const newRow = buildRowFromHeaders_(ctx.headers, {
+      crashId:        crashId,
+      timestamp:      String((payload && payload.timestamp) || ''),
+      appVersion:     String((payload && payload.appVersion) || ''),
+      appVersionCode: (payload && payload.appVersionCode !== undefined && payload.appVersionCode !== null && payload.appVersionCode !== '')
+                        ? Number(payload.appVersionCode) : '',
+      androidVersion: String((payload && payload.androidVersion) || ''),
+      deviceModel:    String((payload && payload.deviceModel) || ''),
+      threadName:     String((payload && payload.threadName) || ''),
+      message:        String((payload && payload.message) || ''),
+      stackTrace:     String((payload && payload.stackTrace) || '')
+    });
+
+    ctx.values.push(newRow);
+    ctx.keyMap.set(crashId, ctx.values.length - 1);
+    ctx.dirty = true;
+
+    return { ok: true };
+  } catch (err) {
+    return {
+      error: {
+        index: index,
+        key: (payload && payload.crashId) ? String(payload.crashId) : '',
         message: err && err.message ? err.message : String(err)
       }
     };

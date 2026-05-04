@@ -26,9 +26,11 @@ app/src/test/java/in/santhaliastore/ratecard/
 │   ├── TimeTest.kt          # ISO 8601, YYYY-MM-DD, display formatting
 │   └── MoneyTest.kt         # ₹ formatting, lakh grouping, parse() tolerance
 ├── data/repo/
-│   └── FtsQueryTest.kt      # FTS4 prefix-query escape rules
+│   ├── FtsQueryTest.kt      # FTS4 prefix-query escape rules
+│   └── CrashRepositoryTest.kt # File-backed crash queue read/clear/truncate
 └── sync/
     ├── SyncDtosTest.kt      # Moshi round-trip for every sync action
+    ├── CrashEventTest.kt    # Crash payload field names + JSON shape
     └── AppsScriptApiTest.kt # Retrofit interface installs cleanly + envelope() shape
 ```
 
@@ -90,11 +92,25 @@ adding new behaviour.
 | Sync API | Retrofit can install the interface (no wildcard / annotation regression) | AppsScriptApiTest |
 | Sync API | `envelope()` builds correct JSON for `health`, `upsertItem`, `bulkSync` | AppsScriptApiTest |
 | Item repo | renaming an item's code repoints purchase history atomically (FK satisfied at every step, repointed entries flagged `pendingSync = 1`) | Manual smoke (needs Room, see "Rename item code…" entries below) |
+| Add/Edit item nav | after a rename, the Edit screen hands the new code back so the navigator pops the stale Item Detail and pushes a fresh one at the new code | Manual smoke ("Rename navigation lands on the new code" below) |
+| Item Detail safety | a stale Item Detail (code now soft-deleted via rename or delete) shows the "Yeh item ab nahi raha" state and hides the FAB, so writes cannot orphan against a dead code | Manual smoke ("Stale Item Detail refuses writes" below) |
+| Layout containment | Home row, Item Detail header, and history rows stay single-line on extreme code/name/price values | Manual smoke ("Long values don't break layouts" below) |
 | SyncRepository | `runFullSyncNow()` writes lastSyncedAt on success, lastSyncError on failure | Manual smoke ("Sync now success/failure surfacing" below) |
 | SyncRepository | `runFullSyncNow()` returns `AppResult.Ok(0)` when nothing pending and still stamps lastSyncedAt | Manual smoke ("Sync now after empty mark" below) |
 | SyncWorker | success path stamps lastSyncedAt and clears lastSyncError | Manual smoke ("Auto sync after item add" below) |
 | SyncWorker | failure path writes lastSyncError (visible on Settings) | Manual smoke ("Bad URL surfaces in Settings" below) |
 | SyncWorker | retries are capped at MAX_ATTEMPTS so a bad URL doesn't bounce forever | Manual smoke ("Bad URL surfaces in Settings" below) |
+| Crash DTOs | `CrashEvent` field names match the Apps Script `Crashes` tab columns verbatim | CrashEventTest |
+| Crash DTOs | `appVersionCode` serialises as a JSON number, not a string | CrashEventTest |
+| Crash DTOs | `LogCrashesPayload` exposes a single `crashes` array | CrashEventTest |
+| Crash queue | `pendingCrashes()` returns empty list when the file is missing | CrashRepositoryTest |
+| Crash queue | `pendingCrashes()` parses each JSON line in order | CrashRepositoryTest |
+| Crash queue | malformed lines are silently skipped (half-write tolerance) | CrashRepositoryTest |
+| Crash queue | `clearUploaded(ids)` removes only those ids, leaves the rest | CrashRepositoryTest |
+| Crash queue | `clearUploaded(allIds)` deletes the file outright | CrashRepositoryTest |
+| Crash queue | `truncateStackTrace()` cuts at 8 KB on a line boundary, appends marker | CrashRepositoryTest |
+| Crash handler | uncaught-exception handler writes `crashes.log` then delegates to the previous handler | Manual smoke ("Crash captured + uploaded" below) |
+| Crash sync | `pushPendingCrashes()` uploads and clears the file on success, leaves it on failure | Manual smoke ("Crash captured + uploaded" below) |
 
 ## Manual smoke checklist
 
@@ -110,6 +126,19 @@ surface.
 - [ ] **Rename item code preserves history** — edit an item with existing entries, change only the **code**, save → opening detail under the new code shows every previous purchase entry; the old code no longer appears in the home list
 - [ ] **Rename item code triggers re-sync** — after the rename, open Settings → pending count includes both the new item row and one row per repointed entry; running "Sync now" pushes them and the count returns to 0
 - [ ] **Rename onto a previously-deleted code** — soft-delete item `OLD`, then edit a different item and rename its code to `OLD` → the rename succeeds (it revives the row with the renamed item's name/unit) and the entries from the source item are visible under `OLD`
+- [ ] **Rename navigation lands on the new code** — full end-to-end:
+  1. From Home, add item code `A` with one entry
+  2. Tap the row → Item Detail for `A` opens (shows that one entry)
+  3. Tap edit, change code to `B`, save
+  4. After save you land on Item Detail for `B` (NOT a blank Item Detail for `A`); the previous entry is visible
+  5. Tap the FAB and add another entry — it appears in `B`'s history
+  6. Press back once → you land on Home (the stale `A` detail is NOT in the back stack)
+  7. Trigger "Sync now"; only one item code (`B`) is in the `Items` sheet and every entry's `itemCode` is `B`
+- [ ] **Stale Item Detail refuses writes** — open Item Detail for code `X` on one task / pop the back stack, then in another flow rename `X` → `Y` (or delete `X`). Re-foreground the original Item Detail for `X` → the screen shows the "Yeh item ab nahi raha" empty state and the FAB is gone, so no entry can be created against the dead code
+- [ ] **Long values don't break layouts** — add an item with code = 50 chars, name = 100 chars, and a first-purchase price of 9999999.99. Confirm:
+  - The Home row stays one line tall (no horizontal scroll, the trailing rate stays visible)
+  - The Item Detail header card doesn't wrap into 4+ lines and the code chip ellipses
+  - History rows stay one line tall — long suppliers / notes ellipsis instead of expanding the card
 - [ ] **Edit entry** — opening edit prefills date, price, quantity, supplier, notes from the existing row
 - [ ] **Delete item** — confirm dialog appears; entry history is wiped on confirm
 - [ ] **Delete entry** — confirm dialog appears; entry disappears from item-detail history
@@ -126,6 +155,7 @@ surface.
 - [ ] **PIN lock** — enabling and entering a PIN gates the next cold start; disabling clears it
 - [ ] **Rotation / config change** — adding-item form preserves typed values across orientation flip
 - [ ] **Update install** — a freshly built APK installs in place over the previously installed one without uninstall (verifies the stable keystore)
+- [ ] **Crash captured + uploaded** — Force a crash (e.g. a debug-only `throw RuntimeException("smoke")` button or `adb shell am crash`), confirm the system "App has stopped" dialog still appears (proves we delegated to the previous handler), reopen the app, confirm `<filesDir>/crashes.log` was written (`adb shell run-as in.santhaliastore.ratecard.debug cat files/crashes.log`), trigger a sync, then check that the Google Sheet's `Crashes` tab gained one row with the expected `crashId`, `appVersion`, `androidVersion`, `deviceModel`, `threadName`, `message`, and a non-empty `stackTrace`. After the sync, `crashes.log` should be absent (or only contain rows that are still pending). Re-trigger a sync without producing a new crash — the `Crashes` tab should NOT gain a duplicate row (server-side `crashId` dedup).
 
 ## Stable signing keystore
 

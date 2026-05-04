@@ -22,7 +22,12 @@ import kotlinx.coroutines.launch
 data class ItemDetailUiState(
     val isLoading: Boolean = true,
     val item: ItemEntity? = null,
-    val entries: List<PurchaseEntryEntity> = emptyList()
+    val entries: List<PurchaseEntryEntity> = emptyList(),
+    // True when the row at this code is missing OR soft-deleted. The
+    // screen uses this to render a "yeh item ab nahi raha" error state
+    // and disable the FAB so the user cannot create entries against a
+    // dead code (which would be silently orphaned).
+    val isMissing: Boolean = false
 )
 
 class ItemDetailViewModel(
@@ -35,7 +40,18 @@ class ItemDetailViewModel(
         itemRepo.observeItem(itemCode),
         purchaseRepo.observeForItem(itemCode)
     ) { item, entries ->
-        ItemDetailUiState(isLoading = false, item = item, entries = entries)
+        // Treat a soft-deleted row as "missing" so the screen never
+        // surfaces stale data or accepts writes against a dead code.
+        // Bug 1b: a rename moves the row out from under us (deleted=1
+        // tombstone) so the back-stack-snapshot of Item Detail must
+        // refuse writes instead of silently orphaning them.
+        val live = item?.takeUnless { it.deleted }
+        ItemDetailUiState(
+            isLoading = false,
+            item = live,
+            entries = entries,
+            isMissing = live == null
+        )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, ItemDetailUiState())
 
     fun deleteItem(onDone: () -> Unit) {

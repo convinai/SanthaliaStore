@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -237,7 +238,12 @@ private fun ItemRow(
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold,
-                        maxLines = 1
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        // Cap the trailing rate so a hugely long price
+                        // (e.g. ₹9999999.99 / something) cannot crowd
+                        // the leading code+name out of view.
+                        modifier = Modifier.widthIn(max = 140.dp)
                     )
                     if (lastUpdateText.isNotEmpty()) {
                         Spacer(Modifier.height(2.dp))
@@ -264,6 +270,10 @@ private fun ItemRow(
 private fun CodeChip(code: String) {
     Box(
         Modifier
+            // Cap the chip so a 50-char code can't push the name (or
+            // worse, the trailing price) off the row. Single line +
+            // ellipsis keeps the row exactly one line tall.
+            .widthIn(max = 96.dp)
             .background(
                 color = MaterialTheme.colorScheme.primaryContainer,
                 shape = RoundedCornerShape(6.dp)
@@ -276,7 +286,9 @@ private fun CodeChip(code: String) {
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.SemiBold
             ),
-            color = MaterialTheme.colorScheme.onPrimaryContainer
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
         )
     }
 }

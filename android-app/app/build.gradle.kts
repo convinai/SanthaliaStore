@@ -13,8 +13,11 @@ android {
         applicationId = "in.santhaliastore.ratecard"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        // Bumped from 1 / "1.0.0" to invalidate launcher icon caches on
+        // MIUI / One UI / themed-icon launchers that key the cached icon
+        // by package + versionCode + signature.
+        versionCode = 2
+        versionName = "1.0.1"
 
         // Vector drawables — supportLibrary lets older devices render them too.
         vectorDrawables {

@@ -1,12 +1,15 @@
 package `in`.santhaliastore.ratecard.di
 
 import android.content.Context
+import `in`.santhaliastore.ratecard.BuildConfig
 import `in`.santhaliastore.ratecard.data.db.AppDatabase
 import `in`.santhaliastore.ratecard.data.prefs.SettingsRepository
+import `in`.santhaliastore.ratecard.data.repo.CrashRepository
 import `in`.santhaliastore.ratecard.data.repo.ItemRepository
 import `in`.santhaliastore.ratecard.data.repo.PurchaseRepository
 import `in`.santhaliastore.ratecard.sync.AppsScriptApi
 import `in`.santhaliastore.ratecard.sync.SyncRepository
+import java.io.File
 
 /**
  * Manual DI container — replaces Hilt for this small app.
@@ -56,12 +59,30 @@ class AppContainer(private val context: Context) {
         PurchaseRepository(database.purchaseEntryDao(), notifyChange)
     }
 
+    /**
+     * On-disk crash queue. Constructed eagerly enough to be available
+     * from the uncaught-exception handler installed in
+     * `RateCardApp.onCreate`, but lazy in the DI sense so unit tests
+     * that don't touch crash logging never instantiate it.
+     *
+     * The file path is fixed to `<filesDir>/crashes.log`. App-private,
+     * cleared on uninstall, not visible to other apps.
+     */
+    val crashRepo: CrashRepository by lazy {
+        CrashRepository(
+            crashFile = File(context.filesDir, CrashRepository.CRASH_FILE_NAME),
+            appVersion = BuildConfig.VERSION_NAME,
+            appVersionCode = BuildConfig.VERSION_CODE
+        )
+    }
+
     val syncRepo: SyncRepository by lazy {
         SyncRepository(
             context = context,
             itemRepo = itemRepo,
             purchaseRepo = purchaseRepo,
             settings = settingsRepo,
+            crashRepo = crashRepo,
             apiFactory = apiFactory
         )
     }

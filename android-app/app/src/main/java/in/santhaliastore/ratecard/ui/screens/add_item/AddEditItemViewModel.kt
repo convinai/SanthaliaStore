@@ -41,7 +41,13 @@ class AddEditItemViewModel(
         val codeError: String? = null,
         val nameError: String? = null,
         val priceError: String? = null,
-        val saved: Boolean = false
+        val saved: Boolean = false,
+        // The canonical trimmed code we just wrote on a successful
+        // save. Set together with `saved = true` so the screen can hand
+        // it back to the navigator — the navigator needs the post-save
+        // code so it can drop a stale Item Detail off the back stack on
+        // a rename and re-push the new code.
+        val savedCode: String? = null
     )
 
     private val _state = MutableStateFlow(Snapshot())
@@ -161,7 +167,7 @@ class AddEditItemViewModel(
                 )
             }
 
-            _state.update { it.copy(isSaving = false, saved = true) }
+            _state.update { it.copy(isSaving = false, saved = true, savedCode = trimmedCode) }
         }
     }
 

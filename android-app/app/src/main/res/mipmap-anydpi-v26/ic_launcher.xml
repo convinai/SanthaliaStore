@@ -1,6 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Adaptive launcher icon. The <monochrome> slot is intentionally OMITTED:
+    Android 13+ themed-icon mode renders that slot in the system
+    foreground colour, and our foreground drawable is a single solid white
+    silhouette. With themed icons enabled, that becomes a single-colour
+    fill on a single-colour tinted background — the icon disappears.
+    Until we author a separate themed-icon drawable, leaving the slot
+    unset makes launchers fall back to the (background, foreground) pair.
+-->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@drawable/ic_launcher_background" />
     <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
 </adaptive-icon>
