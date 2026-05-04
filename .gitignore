@@ -14,6 +14,9 @@ captures/
 *.keystore
 *.jks
 release/
+# Allow the bootstrapped sideload signing keystore so APKs from CI
+# install in place across versions. Intentionally non-secret.
+!android-app/keystore/santhalia.keystore
 
 # IntelliJ / Android Studio
 .idea/
