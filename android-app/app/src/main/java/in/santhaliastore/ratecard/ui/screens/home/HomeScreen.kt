@@ -11,31 +11,40 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -50,9 +59,10 @@ import `in`.santhaliastore.ratecard.R
 import `in`.santhaliastore.ratecard.data.db.entity.ItemWithLastEntry
 import `in`.santhaliastore.ratecard.ui.components.EmptyState
 import `in`.santhaliastore.ratecard.ui.components.SearchField
-import `in`.santhaliastore.ratecard.ui.components.SyncStatusIcon
+import `in`.santhaliastore.ratecard.ui.screens.home.HomeViewModel.UiEvent
 import `in`.santhaliastore.ratecard.util.Money
 import `in`.santhaliastore.ratecard.util.Time
+import java.time.Instant
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,10 +73,72 @@ fun HomeScreen(
     viewModel: HomeViewModel = viewModel(factory = HomeViewModel.Factory)
 ) {
     val query by viewModel.query.collectAsStateWithLifecycle()
-    val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
     val totalCount by viewModel.totalCount.collectAsStateWithLifecycle()
+    val syncing by viewModel.syncing.collectAsStateWithLifecycle()
+    val lastSyncedAt by viewModel.lastSyncedAt.collectAsStateWithLifecycle()
     val items = viewModel.pagedItems.collectAsLazyPagingItems()
     val listState = rememberLazyListState()
+
+    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Resolve the Hinglish snackbar copy here (not in the VM) so every
+    // user-visible string stays in res/values/strings.xml. Mirrors the
+    // pattern used in SettingsScreen so both screens speak the same
+    // language for the same outcome.
+    val snackSyncDoneNoRows = stringResource(R.string.sync_done_no_rows)
+    val snackSyncDoneWithRowsFormat = stringResource(R.string.sync_done_with_rows_format)
+    val snackSyncDonePulledOnlyFormat = stringResource(R.string.sync_done_pulled_only_format)
+    val snackSyncDoneCombinedFormat = stringResource(R.string.sync_done_combined_format)
+    val snackSyncFailedFormat = stringResource(R.string.sync_failed_format)
+
+    LaunchedEffect(viewModel) {
+        viewModel.events.collect { event ->
+            val text = when (event) {
+                is UiEvent.SyncSuccess -> {
+                    val pulled = event.pulledItems + event.pulledEntries
+                    when {
+                        event.pushed == 0 && pulled == 0 -> snackSyncDoneNoRows
+                        event.pushed > 0 && pulled == 0 ->
+                            snackSyncDoneWithRowsFormat.format(event.pushed)
+                        event.pushed == 0 && pulled > 0 ->
+                            snackSyncDonePulledOnlyFormat.format(pulled)
+                        else ->
+                            snackSyncDoneCombinedFormat.format(event.pushed, pulled)
+                    }
+                }
+                is UiEvent.SyncFailure -> snackSyncFailedFormat.format(event.message)
+            }
+            snackbarHostState.showSnackbar(
+                message = text,
+                duration = SnackbarDuration.Long
+            )
+        }
+    }
+
+    // Pre-resolve the "never synced" copy so the derived state below
+    // can stay pure (no Composable calls inside the lambda).
+    val neverSyncedLabel = stringResource(R.string.home_never_synced)
+    val lastSyncFormat = stringResource(R.string.home_last_sync_format)
+
+    // Format the relative-time string off the timestamp + context.
+    // `derivedStateOf` keeps the recomposition scoped to just the
+    // status line — the rest of Home doesn't re-render when the
+    // value flips.
+    //
+    // We deliberately do NOT poll a clock: "5 min pehle" staying
+    // "5 min pehle" until the user taps refresh is fine; tapping
+    // refresh updates the timestamp and the line snaps to "abhi abhi".
+    val lastSyncLine by remember(lastSyncedAt, context) {
+        derivedStateOf {
+            if (lastSyncedAt <= 0L) {
+                neverSyncedLabel
+            } else {
+                val iso = Instant.ofEpochMilli(lastSyncedAt).toString()
+                lastSyncFormat.format(Time.relativeFromIsoInstant(context, iso))
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -88,13 +160,42 @@ fun HomeScreen(
                     titleContentColor = MaterialTheme.colorScheme.onBackground
                 ),
                 actions = {
-                    SyncStatusIcon(status = syncStatus, onClick = { viewModel.onSyncTap() })
+                    // Explicit refresh button. While syncing we swap the
+                    // icon for a spinner of the same size so the slot
+                    // stays exactly 48 dp wide — no layout shift in the
+                    // app bar between idle and in-progress states.
+                    //
+                    // The IconButton itself is kept (rather than just a
+                    // Box around the spinner) so the tap target stays
+                    // 48 dp; we just disable it while a sync is running
+                    // to prevent re-entrant taps.
+                    IconButton(
+                        onClick = { viewModel.syncNow() },
+                        enabled = !syncing
+                    ) {
+                        if (syncing) {
+                            // 24 dp matches Material's default Icon size,
+                            // so the spinner occupies the same visual slot
+                            // as Icons.Filled.Refresh.
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Filled.Refresh,
+                                contentDescription = stringResource(R.string.home_refresh_cd)
+                            )
+                        }
+                    }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.settings_title))
                     }
                 }
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = onAddItem,
@@ -117,6 +218,25 @@ fun HomeScreen(
                     value = query,
                     onValueChange = viewModel::onQueryChange,
                     placeholder = stringResource(R.string.home_search_hint)
+                )
+            }
+
+            // "Last sync" status line — sits directly under the search
+            // bar, right-aligned so it pairs visually with the refresh
+            // button it tells the story of. Tiny, muted, never the focal
+            // point but always available when two phone owners are
+            // wondering whether they're on the same data.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, top = 12.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                Text(
+                    text = lastSyncLine,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
                 )
             }
 
@@ -292,4 +412,3 @@ private fun CodeChip(code: String) {
         )
     }
 }
-

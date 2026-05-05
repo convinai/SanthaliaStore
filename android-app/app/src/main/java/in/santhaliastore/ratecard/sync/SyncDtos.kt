@@ -135,3 +135,70 @@ data class CrashEvent(
 data class LogCrashesPayload(
     val crashes: List<CrashEvent>
 )
+
+/* -------------------- pull / bidirectional sync ----------------------- */
+
+/**
+ * `pullChanges` request payload.
+ *
+ * `sinceCursor` is whatever opaque token the server handed back on the
+ * previous pull (empty string on a fresh install — the server then
+ * returns the entire dataset). The client never inspects it; it just
+ * round-trips it. See [PullChangesResponse.cursor].
+ */
+@JsonClass(generateAdapter = true)
+data class PullChangesPayload(val sinceCursor: String)
+
+/**
+ * `pullChanges` response.
+ *
+ * `cursor` is opaque to the client — store it verbatim and pass it
+ * back next time. `schemaVersion` and `time` mirror the existing
+ * [SyncResponse] envelope shape for diagnostics; they're not
+ * load-bearing client-side.
+ */
+@JsonClass(generateAdapter = true)
+data class PullChangesResponse(
+    val ok: Boolean,
+    val items: List<PulledItem>,
+    val entries: List<PulledEntry>,
+    val cursor: String,
+    val schemaVersion: Int? = null,
+    val time: String? = null
+)
+
+/**
+ * A single item row pulled from the server.
+ *
+ * `updatedAt` is the device-local timestamp from the last writer
+ * (used for last-writer-wins conflict resolution against the local
+ * row's `updatedAt`). `serverUpdatedAt` is informational only — the
+ * cursor handles incremental progress.
+ */
+@JsonClass(generateAdapter = true)
+data class PulledItem(
+    val code: String,
+    val name: String,
+    val unit: String?,
+    val updatedAt: String,
+    val deleted: Boolean,
+    val serverUpdatedAt: String
+)
+
+/**
+ * A single purchase entry pulled from the server. Mirrors
+ * [PulledItem] in the conflict / cursor semantics.
+ */
+@JsonClass(generateAdapter = true)
+data class PulledEntry(
+    val entryId: String,
+    val itemCode: String,
+    val date: String,
+    val pricePerUnit: Double,
+    val quantity: Double?,
+    val supplier: String?,
+    val notes: String?,
+    val updatedAt: String,
+    val deleted: Boolean,
+    val serverUpdatedAt: String
+)

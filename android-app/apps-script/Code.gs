@@ -19,14 +19,18 @@
  * so comments are friendly and the logic is straightforward.
  */
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 // --- Sheet/tab names and headers (the source of truth for column order) ---
 const ITEMS_SHEET = 'Items';
 const ENTRIES_SHEET = 'PurchaseEntries';
 const CRASHES_SHEET = 'Crashes';
 
-const ITEMS_HEADERS = ['code', 'name', 'unit', 'updatedAt', 'deleted'];
+// `serverUpdatedAt` is the bidirectional-sync cursor column. The server
+// stamps it on every write (upsert OR soft-delete); clients never send
+// it. Pull requests filter rows by `serverUpdatedAt > sinceCursor`, so
+// using server time keeps things immune to client clock skew.
+const ITEMS_HEADERS = ['code', 'name', 'unit', 'updatedAt', 'deleted', 'serverUpdatedAt'];
 const ENTRIES_HEADERS = [
   'entryId',
   'itemCode',
@@ -36,7 +40,8 @@ const ENTRIES_HEADERS = [
   'supplier',
   'notes',
   'updatedAt',
-  'deleted'
+  'deleted',
+  'serverUpdatedAt'
 ];
 // Crash log columns — order MUST match the Android CrashEvent DTO
 // field order so the sheet stays readable even when columns are
@@ -60,6 +65,13 @@ const BULK_LIMIT = 200;
 // 50 too; if the device has ever produced more than 50 crashes between
 // syncs, the user has bigger problems than a slow sheet write.
 const CRASHES_LIMIT = 50;
+
+// Hard cap on how many rows pullChanges returns per sheet per call.
+// The Apps Script response budget is large (~50 MB) so this is a
+// defensive guard, not a real-world ceiling. The client should keep
+// polling with the new cursor until it gets fewer than PULL_LIMIT
+// rows back from BOTH sheets in the same response.
+const PULL_LIMIT = 1000;
 
 // How long to wait for the script lock (concurrent writes from multiple
 // phones are possible). 30s is long enough to ride out a normal sync.
@@ -115,6 +127,7 @@ function doPost(e) {
       case 'upsertEntry':  return handleUpsertEntry_(payload);
       case 'deleteEntry':  return handleDeleteEntry_(payload);
       case 'bulkSync':     return handleBulkSync_(payload);
+      case 'pullChanges':  return handlePullChanges_(payload);
       case 'logCrashes':   return handleLogCrashes_(payload);
       default:
         return jsonResponse_({
@@ -334,6 +347,78 @@ function handleBulkSync_(payload) {
 
 
 /**
+ * Pull changes from the server, newer than `sinceCursor`.
+ *
+ * Request payload:
+ *   { sinceCursor: "<ISO 8601 string or empty/missing>" }
+ *
+ * Behaviour:
+ *   - Empty / missing / unparseable cursor → return everything (capped).
+ *   - Otherwise return rows whose `serverUpdatedAt` is strictly greater
+ *     than the cursor. Comparison is lexicographic on ISO 8601 UTC `Z`
+ *     strings, which matches numeric time order as long as the server
+ *     keeps using `nowIso_()` for every stamp.
+ *   - Rows are sorted ascending by `serverUpdatedAt` so the client can
+ *     apply them in chronological order.
+ *   - Soft-deleted rows ARE included — the client needs to apply the
+ *     delete locally and is responsible for hiding them from the UI.
+ *   - Per-sheet cap of PULL_LIMIT rows. If we hit the cap, the next
+ *     poll with the new cursor will pick up where we left off.
+ *
+ * NOTE on locking: this handler takes the script lock ONLY around the
+ * sheet load (loadSheetContext_). That is not a "write lock" in the
+ * spirit of the requirement — we hold it only long enough to (a) safely
+ * run the v1→v2 column migration if needed, and (b) snapshot a
+ * consistent in-memory view of the sheet. Filtering, sorting and DTO
+ * projection happen AFTER the lock is released, in pure JS, so a pull
+ * never blocks concurrent writes for more than the snapshot duration
+ * (a few hundred ms even for thousands of rows). Without this lock the
+ * one-shot migration could race with a concurrent writer and produce
+ * partially-written headers; with it, the migration is safely
+ * serialised against writers that also use withLock_.
+ */
+function handlePullChanges_(payload) {
+  const rawCursor = (payload && payload.sinceCursor !== undefined && payload.sinceCursor !== null)
+    ? String(payload.sinceCursor)
+    : '';
+  const cursor = parseCursor_(rawCursor); // '' means "send everything"
+
+  let itemsCtx, entriesCtx;
+  withLock_(function () {
+    itemsCtx   = loadSheetContext_(ITEMS_SHEET, ITEMS_HEADERS);
+    entriesCtx = loadSheetContext_(ENTRIES_SHEET, ENTRIES_HEADERS);
+  });
+
+  // Filter / sort / project happen OUTSIDE the lock — they only touch
+  // the in-memory snapshot and never the spreadsheet.
+  const items   = collectChangedRows_(itemsCtx,   ITEMS_HEADERS,   cursor, PULL_LIMIT, rowToItemDto_);
+  const entries = collectChangedRows_(entriesCtx, ENTRIES_HEADERS, cursor, PULL_LIMIT, rowToEntryDto_);
+
+  // New cursor = max serverUpdatedAt across both result sets. If nothing
+  // changed (both arrays empty) we hand the client back the cursor it
+  // sent us — never null — so it can keep polling without re-loading
+  // everything from scratch.
+  let newCursor = cursor || '';
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].serverUpdatedAt > newCursor) newCursor = items[i].serverUpdatedAt;
+  }
+  for (let i = 0; i < entries.length; i++) {
+    if (entries[i].serverUpdatedAt > newCursor) newCursor = entries[i].serverUpdatedAt;
+  }
+
+  return jsonResponse_({
+    ok: true,
+    action: 'pullChanges',
+    items: items,
+    entries: entries,
+    cursor: newCursor,
+    schemaVersion: SCHEMA_VERSION,
+    time: nowIso_()
+  });
+}
+
+
+/**
  * Crash log appender. Accepts up to CRASHES_LIMIT crash events and
  * writes them to the `Crashes` tab. Idempotent on `crashId` — if a
  * row with the same crashId already exists we leave it alone (a
@@ -400,6 +485,10 @@ function upsertItemInMemory_(ctx, payload, index) {
     const name = String((payload && payload.name) || '');
     const unit = String((payload && payload.unit) || '');
     const updatedAt = requireString_(payload && payload.updatedAt, 'updatedAt');
+    // Server-side cursor stamp. ALWAYS overwritten on a write — never
+    // taken from the client payload. UTC `Z` so ISO strings sort
+    // lexicographically the same way they sort by time.
+    const serverUpdatedAt = nowIso_();
 
     const existingRow = ctx.keyMap.get(code); // 0-based row index inside ctx.values (excluding header), or undefined
 
@@ -408,7 +497,8 @@ function upsertItemInMemory_(ctx, payload, index) {
       name: name,
       unit: unit,
       updatedAt: updatedAt,
-      deleted: 'FALSE'
+      deleted: 'FALSE',
+      serverUpdatedAt: serverUpdatedAt
     });
 
     if (existingRow === undefined) {
@@ -425,7 +515,9 @@ function upsertItemInMemory_(ctx, payload, index) {
         ctx.values[existingRow] = newRow;
         ctx.dirty = true;
       }
-      // else: incoming is older — silently ignore (still counts as processed)
+      // else: incoming is older — silently ignore (still counts as processed).
+      // We deliberately do NOT bump serverUpdatedAt in the ignore-branch:
+      // nothing actually changed, so the pull cursor should not move.
     }
 
     return { ok: true };
@@ -454,6 +546,7 @@ function upsertEntryInMemory_(ctx, payload, index) {
     const supplier  = String((payload && payload.supplier) || '');
     const notes     = String((payload && payload.notes) || '');
     const updatedAt = requireString_(payload && payload.updatedAt, 'updatedAt');
+    const serverUpdatedAt = nowIso_();
 
     const existingRow = ctx.keyMap.get(entryId);
 
@@ -466,7 +559,8 @@ function upsertEntryInMemory_(ctx, payload, index) {
       supplier: supplier,
       notes: notes,
       updatedAt: updatedAt,
-      deleted: 'FALSE'
+      deleted: 'FALSE',
+      serverUpdatedAt: serverUpdatedAt
     });
 
     if (existingRow === undefined) {
@@ -480,6 +574,7 @@ function upsertEntryInMemory_(ctx, payload, index) {
         ctx.values[existingRow] = newRow;
         ctx.dirty = true;
       }
+      // Older incoming write: skip; do not bump serverUpdatedAt.
     }
 
     return { ok: true };
@@ -507,6 +602,7 @@ function softDeleteInMemory_(ctx, keyName, payload, index) {
   try {
     const key = requireString_(payload && payload[keyName], keyName);
     const updatedAt = requireString_(payload && payload.updatedAt, 'updatedAt');
+    const serverUpdatedAt = nowIso_();
 
     const existingRow = ctx.keyMap.get(key);
 
@@ -514,9 +610,10 @@ function softDeleteInMemory_(ctx, keyName, payload, index) {
       // Insert a tombstone row so future syncs see the delete.
       const seed = {};
       ctx.headers.forEach(function (h) { seed[h] = ''; });
-      seed[keyName]    = key;
-      seed.updatedAt   = updatedAt;
-      seed.deleted     = 'TRUE';
+      seed[keyName]         = key;
+      seed.updatedAt        = updatedAt;
+      seed.deleted          = 'TRUE';
+      seed.serverUpdatedAt  = serverUpdatedAt;
       const tombstone = buildRowFromHeaders_(ctx.headers, seed);
       ctx.values.push(tombstone);
       ctx.keyMap.set(key, ctx.values.length - 1);
@@ -525,10 +622,12 @@ function softDeleteInMemory_(ctx, keyName, payload, index) {
       const stored = ctx.values[existingRow];
       const storedUpdatedAt = String(stored[ctx.colIndex.updatedAt] || '');
       if (updatedAt >= storedUpdatedAt) {
-        stored[ctx.colIndex.deleted]   = 'TRUE';
-        stored[ctx.colIndex.updatedAt] = updatedAt;
+        stored[ctx.colIndex.deleted]         = 'TRUE';
+        stored[ctx.colIndex.updatedAt]       = updatedAt;
+        stored[ctx.colIndex.serverUpdatedAt] = serverUpdatedAt;
         ctx.dirty = true;
       }
+      // Older incoming delete: skip; do not bump serverUpdatedAt.
     }
 
     return { ok: true };
@@ -622,7 +721,6 @@ function loadSheetContext_(sheetName, expectedHeaders) {
   }
 
   // Make sure there is a header row. If the sheet is empty, write headers.
-  const lastCol = Math.max(sheet.getLastColumn(), expectedHeaders.length);
   const lastRow = sheet.getLastRow();
 
   if (lastRow === 0) {
@@ -631,24 +729,105 @@ function loadSheetContext_(sheetName, expectedHeaders) {
   }
 
   // Read everything in one go — single getValues call per sheet per request.
-  const all = sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 1), Math.max(sheet.getLastColumn(), expectedHeaders.length)).getValues();
+  // We deliberately read at least `expectedHeaders.length` columns so a v1
+  // sheet (missing the trailing `serverUpdatedAt` column) still gives us a
+  // padded array we can write back into.
+  const physicalLastRow = Math.max(sheet.getLastRow(), 1);
+  const physicalLastCol = Math.max(sheet.getLastColumn(), expectedHeaders.length);
+  const all = sheet.getRange(1, 1, physicalLastRow, physicalLastCol).getValues();
 
   let headerRow = all[0].map(function (h) { return String(h || '').trim(); });
 
-  // If the existing header row is missing or wrong, rewrite it. We do not
-  // try to be clever here — the schema is fixed, and the user has been told
-  // not to rename columns.
-  let headersOk = headerRow.length >= expectedHeaders.length;
-  if (headersOk) {
-    for (let i = 0; i < expectedHeaders.length; i++) {
-      if (headerRow[i] !== expectedHeaders[i]) { headersOk = false; break; }
+  // ---- v1 -> v2 migration -------------------------------------------------
+  // Detect the case where the sheet has the old schema (everything except
+  // the trailing `serverUpdatedAt` column). We do NOT clear the header row
+  // — that would risk wiping the data column underneath. Instead we just
+  // append the missing column and backfill it from `updatedAt`. This is
+  // the same shape as `expectedHeaders` minus the last entry.
+  const newColumns = [];
+  for (let i = 0; i < expectedHeaders.length; i++) {
+    if (headerRow[i] !== expectedHeaders[i]) {
+      // Column at position i is wrong/missing. If it is purely a tail-append
+      // (everything before matches), we treat it as a migration; otherwise
+      // we fall through to the existing "rewrite header" safety net below.
+      newColumns.push({ index: i, name: expectedHeaders[i] });
     }
   }
-  if (!headersOk) {
-    sheet.getRange(1, 1, 1, expectedHeaders.length).setValues([expectedHeaders]);
-    sheet.setFrozenRows(1);
+  // If every mismatched column is at the end (i.e. they form a contiguous
+  // tail) AND the prefix matches, it's a clean additive migration.
+  let isCleanTailAppend = newColumns.length > 0;
+  for (let i = 0; i < newColumns.length; i++) {
+    if (newColumns[i].index !== expectedHeaders.length - newColumns.length + i) {
+      isCleanTailAppend = false;
+      break;
+    }
+  }
+  // Also require that the prefix (everything before the first new column)
+  // matches expectedHeaders so we don't accidentally migrate a corrupted
+  // sheet.
+  if (isCleanTailAppend) {
+    const firstNewIdx = newColumns[0].index;
+    for (let i = 0; i < firstNewIdx; i++) {
+      if (headerRow[i] !== expectedHeaders[i]) { isCleanTailAppend = false; break; }
+    }
+  }
+
+  if (isCleanTailAppend) {
+    // Write the new header cells in-place (don't touch the prefix).
+    const startCol = newColumns[0].index + 1; // 1-based
+    const newHeaderNames = newColumns.map(function (c) { return c.name; });
+    sheet.getRange(1, startCol, 1, newHeaderNames.length).setValues([newHeaderNames]);
+
+    // Backfill the new column(s) for every existing data row.
+    // For `serverUpdatedAt` specifically, the best fallback for legacy
+    // data is the row's existing `updatedAt` — that lets the cursor work
+    // sensibly even before a row is ever re-touched.
+    const updatedAtIdx = expectedHeaders.indexOf('updatedAt');
+    for (let r = 1; r < all.length; r++) {
+      // Pad the in-memory row out to expectedHeaders.length first.
+      while (all[r].length < expectedHeaders.length) all[r].push('');
+      newColumns.forEach(function (c) {
+        if (c.name === 'serverUpdatedAt') {
+          const existingUpdatedAt = (updatedAtIdx >= 0)
+            ? String(all[r][updatedAtIdx] || '')
+            : '';
+          all[r][c.index] = existingUpdatedAt || nowIso_();
+        } else {
+          all[r][c.index] = '';
+        }
+      });
+    }
+
+    // Push the backfilled values back to the sheet so the migration
+    // sticks even if no upserts happen this call.
+    if (all.length > 1) {
+      const dataRows = [];
+      for (let r = 1; r < all.length; r++) {
+        dataRows.push(all[r].slice(0, expectedHeaders.length));
+      }
+      sheet.getRange(2, 1, dataRows.length, expectedHeaders.length).setValues(dataRows);
+    }
+
+    // Refresh the in-memory header view to the canonical layout.
     headerRow = expectedHeaders.slice();
-    if (all.length > 0) all[0] = headerRow.slice();
+    all[0] = headerRow.slice();
+  } else {
+    // Either headers already match, or they are corrupted in a way we
+    // can't migrate safely. Fall back to the original "rewrite header
+    // row" behaviour, which is the same blunt-force fix the script has
+    // always had for non-tail-append corruption.
+    let headersOk = headerRow.length >= expectedHeaders.length;
+    if (headersOk) {
+      for (let i = 0; i < expectedHeaders.length; i++) {
+        if (headerRow[i] !== expectedHeaders[i]) { headersOk = false; break; }
+      }
+    }
+    if (!headersOk) {
+      sheet.getRange(1, 1, 1, expectedHeaders.length).setValues([expectedHeaders]);
+      sheet.setFrozenRows(1);
+      headerRow = expectedHeaders.slice();
+      if (all.length > 0) all[0] = headerRow.slice();
+    }
   }
 
   const headers = expectedHeaders.slice();
@@ -765,4 +944,115 @@ function jsonResponse_(obj) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * Single source of truth for the server "now" stamp used by both
+ * `serverUpdatedAt` (per-row) and the `time` field on responses.
+ * UTC `Z` form so lexicographic compare equals time compare.
+ */
+function nowIso_() {
+  return new Date().toISOString();
+}
+
+/**
+ * Sanitise the incoming pull cursor. Anything we can't parse becomes
+ * '' which means "send everything". We accept both an ISO 8601 string
+ * (the normal case) and an empty/missing value. We only reject values
+ * that JS's Date can't parse, because then the lexicographic compare
+ * would silently misbehave.
+ */
+function parseCursor_(raw) {
+  if (raw === '' || raw === null || raw === undefined) return '';
+  const s = String(raw);
+  const t = Date.parse(s);
+  if (isNaN(t)) return '';   // unparseable: full re-pull
+  return s;                  // keep the original string for lex-compare
+}
+
+/**
+ * Pull-only helper. Walks `ctx.values`, filters rows whose
+ * `serverUpdatedAt > cursor`, sorts ascending, caps at `limit`,
+ * and projects each row through `toDto`.
+ */
+function collectChangedRows_(ctx, expectedHeaders, cursor, limit, toDto) {
+  const sIdx = ctx.colIndex.serverUpdatedAt;
+  const out = [];
+
+  for (let r = 0; r < ctx.values.length; r++) {
+    const row = ctx.values[r];
+    const sUpdated = String(row[sIdx] || '');
+    // Empty serverUpdatedAt should not happen post-migration, but if
+    // it does we treat it as "older than any cursor" so the client
+    // doesn't get an undefined-shaped row.
+    if (!sUpdated) continue;
+    if (cursor && sUpdated <= cursor) continue;
+    out.push(row);
+  }
+
+  // Ascending by serverUpdatedAt, ties stable.
+  out.sort(function (a, b) {
+    const av = String(a[sIdx] || '');
+    const bv = String(b[sIdx] || '');
+    if (av < bv) return -1;
+    if (av > bv) return 1;
+    return 0;
+  });
+
+  // Apply the per-sheet cap. Slice + map is fine at 1000 rows.
+  const capped = (out.length > limit) ? out.slice(0, limit) : out;
+  return capped.map(function (row) { return toDto(row, ctx.colIndex); });
+}
+
+/** Sheet row → Items DTO sent to the client. */
+function rowToItemDto_(row, colIndex) {
+  return {
+    code:            String(row[colIndex.code] || ''),
+    name:            String(row[colIndex.name] || ''),
+    unit:            String(row[colIndex.unit] || ''),
+    updatedAt:       String(row[colIndex.updatedAt] || ''),
+    deleted:         parseBool_(row[colIndex.deleted]),
+    serverUpdatedAt: String(row[colIndex.serverUpdatedAt] || '')
+  };
+}
+
+/** Sheet row → PurchaseEntries DTO sent to the client. */
+function rowToEntryDto_(row, colIndex) {
+  const rawQty = row[colIndex.quantity];
+  const quantity = (rawQty === '' || rawQty === null || rawQty === undefined)
+    ? null
+    : Number(rawQty);
+
+  const rawPrice = row[colIndex.pricePerUnit];
+  const pricePerUnit = (rawPrice === '' || rawPrice === null || rawPrice === undefined)
+    ? 0
+    : Number(rawPrice);
+
+  return {
+    entryId:         String(row[colIndex.entryId] || ''),
+    itemCode:        String(row[colIndex.itemCode] || ''),
+    date:            String(row[colIndex.date] || ''),
+    pricePerUnit:    pricePerUnit,
+    quantity:        (quantity === null || isNaN(quantity)) ? null : quantity,
+    supplier:        String(row[colIndex.supplier] || ''),
+    notes:           String(row[colIndex.notes] || ''),
+    updatedAt:       String(row[colIndex.updatedAt] || ''),
+    deleted:         parseBool_(row[colIndex.deleted]),
+    serverUpdatedAt: String(row[colIndex.serverUpdatedAt] || '')
+  };
+}
+
+/**
+ * Tolerant boolean parse for the `deleted` column. The script writes
+ * the strings `'TRUE'` / `'FALSE'` but a user editing the sheet by
+ * hand could end up with the spreadsheet boolean (`true` / `false`)
+ * or even `1` / `0`. Be lenient on read.
+ */
+function parseBool_(v) {
+  if (v === true) return true;
+  if (v === false) return false;
+  if (v === 1 || v === '1') return true;
+  if (v === 0 || v === '0') return false;
+  const s = String(v || '').trim().toUpperCase();
+  return s === 'TRUE';
 }

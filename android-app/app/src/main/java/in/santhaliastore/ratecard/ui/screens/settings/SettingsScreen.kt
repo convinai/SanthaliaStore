@@ -101,18 +101,29 @@ fun SettingsScreen(
 
     // Resolve the Hinglish snackbar copy here (not in the VM) so
     // every user-visible string lives in res/values/strings.xml.
+    // Home and Settings share this resolver shape so the same outcome
+    // surfaces the same message on both screens.
     val snackSyncDoneNoRows = stringResource(R.string.sync_done_no_rows)
     val snackSyncDoneWithRowsFormat = stringResource(R.string.sync_done_with_rows_format)
+    val snackSyncDonePulledOnlyFormat = stringResource(R.string.sync_done_pulled_only_format)
+    val snackSyncDoneCombinedFormat = stringResource(R.string.sync_done_combined_format)
     val snackSyncFailedFormat = stringResource(R.string.sync_failed_format)
 
     // One-shot snackbar events from the VM (sync done / sync failed).
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
             val text = when (event) {
-                is UiEvent.SyncSuccess -> if (event.processed > 0) {
-                    snackSyncDoneWithRowsFormat.format(event.processed)
-                } else {
-                    snackSyncDoneNoRows
+                is UiEvent.SyncSuccess -> {
+                    val pulled = event.pulledItems + event.pulledEntries
+                    when {
+                        event.pushed == 0 && pulled == 0 -> snackSyncDoneNoRows
+                        event.pushed > 0 && pulled == 0 ->
+                            snackSyncDoneWithRowsFormat.format(event.pushed)
+                        event.pushed == 0 && pulled > 0 ->
+                            snackSyncDonePulledOnlyFormat.format(pulled)
+                        else ->
+                            snackSyncDoneCombinedFormat.format(event.pushed, pulled)
+                    }
                 }
                 is UiEvent.SyncFailure -> snackSyncFailedFormat.format(event.message)
             }

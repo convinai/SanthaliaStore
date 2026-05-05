@@ -94,11 +94,18 @@
     <string name="sync_pending_format">%1$d rows sync hone baaki hain</string>
     <string name="sync_pending_none">Sab kuch sync ho gaya hai</string>
     <string name="sync_last_error_format">Pichhli error: %1$s</string>
-    <string name="sync_done_with_rows_format">Sync ho gaya — %1$d rows</string>
-    <string name="sync_done_no_rows">Sync ho gaya — kuch naya nahi</string>
+    <string name="sync_done_with_rows_format">Sync ho gaya — %1$d rows upload</string>
+    <string name="sync_done_no_rows">Sab kuch sync ho gaya — kuch naya nahi</string>
+    <string name="sync_done_pulled_only_format">Sync ho gaya — %1$d nayi entries</string>
+    <string name="sync_done_combined_format">Sync ho gaya — %1$d upload, %2$d download</string>
     <string name="sync_failed_format">Sync nahi hua: %1$s</string>
     <string name="sync_view_details">Details dekhein</string>
     <string name="sync_details_title">Sync details</string>
+
+    <!-- Home — refresh + last-sync status line -->
+    <string name="home_refresh_cd">Refresh karein</string>
+    <string name="home_last_sync_format">Last sync: %1$s</string>
+    <string name="home_never_synced">Abhi tak sync nahi hua</string>
 
     <!-- Settings -->
     <string name="settings_title">Settings</string>

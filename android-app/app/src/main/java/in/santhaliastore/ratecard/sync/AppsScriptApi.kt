@@ -37,6 +37,19 @@ interface AppsScriptApi {
         @Body body: RequestBody
     ): SyncResponse
 
+    /**
+     * Pull endpoint — same wire envelope as [call] but returns the
+     * typed [PullChangesResponse] (items + entries + cursor) instead
+     * of the lighter [SyncResponse]. We declare a second method rather
+     * than overloading `call` so each Retrofit method has a stable,
+     * non-wildcard return type.
+     */
+    @POST
+    suspend fun pullChanges(
+        @Url url: String,
+        @Body body: RequestBody
+    ): PullChangesResponse
+
     companion object {
 
         /** Single Moshi instance — adapters cache internally, so reuse it. */

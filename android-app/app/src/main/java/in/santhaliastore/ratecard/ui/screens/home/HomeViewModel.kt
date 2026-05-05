@@ -15,8 +15,10 @@ import `in`.santhaliastore.ratecard.data.prefs.SettingsRepository
 import `in`.santhaliastore.ratecard.data.repo.ItemRepository
 import `in`.santhaliastore.ratecard.sync.SyncRepository
 import `in`.santhaliastore.ratecard.ui.components.SyncStatus
+import `in`.santhaliastore.ratecard.util.AppResult
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -25,7 +27,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 /**
  * ViewModel for the home / search list.
@@ -33,6 +37,11 @@ import kotlinx.coroutines.flow.stateIn
  * Search input is debounced 300ms before kicking off a new FTS query.
  * The `pagedItems` flow swaps between "all items" and "search results"
  * via flatMapLatest so the UI never sees stale data.
+ *
+ * The Home screen also exposes a manual refresh button that calls
+ * [syncNow] — the same push-then-pull flow the Settings screen drives.
+ * Outcome events are surfaced via the [events] channel so the screen
+ * can show a snackbar matching whatever Settings would show.
  */
 class HomeViewModel(
     private val itemRepo: ItemRepository,
@@ -79,12 +88,65 @@ class HomeViewModel(
     val lastSyncedAt: StateFlow<Long> = settingsRepo.lastSyncedAt
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0L)
 
+    /**
+     * `true` while the manual Home refresh is running. Drives the
+     * top-bar spinner. Independent from [syncStatus] (which also flips
+     * when the background WorkManager job runs) so a tap on the
+     * refresh button always shows progress immediately.
+     */
+    private val _syncing = MutableStateFlow(false)
+    val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
+
+    /** One-shot UI events (snackbars). Buffered so we never drop one. */
+    private val _events = Channel<UiEvent>(Channel.BUFFERED)
+    val events: Flow<UiEvent> = _events.receiveAsFlow()
+
+    /**
+     * Sync outcome events. The Compose layer translates these into
+     * stringResource-backed snackbars so all user-visible copy stays
+     * in `res/values/strings.xml`. Mirrors the shape exposed by
+     * `SettingsViewModel.UiEvent` so both screens render the same
+     * message for the same outcome.
+     */
+    sealed interface UiEvent {
+        data class SyncSuccess(
+            val pushed: Int,
+            val pulledItems: Int,
+            val pulledEntries: Int
+        ) : UiEvent
+        data class SyncFailure(val message: String) : UiEvent
+    }
+
     fun onQueryChange(value: String) {
         _query.value = value
     }
 
     fun onSyncTap() {
         syncRepo.requestImmediateSync()
+    }
+
+    /**
+     * Manual refresh from the Home top app bar — runs the full
+     * push-then-pull sync inline and surfaces the outcome as a
+     * snackbar. Ignores re-entrant taps so a double-tap doesn't
+     * spawn two parallel syncs.
+     */
+    fun syncNow() {
+        if (_syncing.value) return // ignore double taps
+        _syncing.value = true
+        viewModelScope.launch {
+            val result = syncRepo.runFullSyncNow()
+            _syncing.value = false
+            val event = when (result) {
+                is AppResult.Ok -> UiEvent.SyncSuccess(
+                    pushed = result.value.pushedRows,
+                    pulledItems = result.value.pulledItems,
+                    pulledEntries = result.value.pulledEntries
+                )
+                is AppResult.Err -> UiEvent.SyncFailure(result.message)
+            }
+            _events.trySend(event)
+        }
     }
 
     companion object {
@@ -103,4 +165,3 @@ class HomeViewModel(
         }
     }
 }
-

@@ -64,20 +64,38 @@ That's it — the app will now sync automatically.
 
 ### 6. Updating the script later
 
-If you ever edit `Code.gs` (for example, to fix a bug):
+If you ever edit `Code.gs` (for example, to fix a bug, or to install a new schema like v2 that adds the `serverUpdatedAt` column for bidirectional sync):
 
-1. Save the file in the Apps Script editor.
+1. Paste the new `Code.gs` into the Apps Script editor and click Save.
 2. Click **Deploy → Manage deployments**.
 3. Click the pencil icon next to your existing deployment.
 4. Under *Version*, choose **New version** and click **Deploy**.
 
+You **must** pick *New version* — just saving is not enough. The phone always talks to the deployed version, not the editor version, so a save without a redeploy looks like nothing happened.
+
 Important: The URL stays the same — you do **not** need to update the phone.
+
+When you upgrade from schema v1 to v2, the script will automatically add the new `serverUpdatedAt` column to your existing `Items` and `PurchaseEntries` tabs the first time the phone syncs after the redeploy. Existing rows are kept; the new column is filled in from each row's `updatedAt` value as a best-effort backfill so pull-sync works immediately. You do not need to migrate anything by hand.
 
 ---
 
 ## How sync works
 
 The phone is the boss. Aap jo bhi entry karte ho, woh phone ke andar SQLite database mein turant save ho jaata hai — internet ki zaroorat nahin. Jab WiFi ya mobile data milta hai, app ek `bulkSync` request bhejta hai jisme last sync ke baad ke saare changes hote hain. Yeh script har row ko `updatedAt` ke basis pe compare karta hai (last-write-wins) aur sheet mein save kar deta hai. Deletes ko hum *soft delete* karte hain (column `deleted = TRUE`) taaki dusre phone bhi delete dekh saken.
+
+### Pull / bidirectional sync
+
+Schema v2 onwards (`schemaVersion: 2` in the health response) the phone can also **pull** changes that other phones (or hand-edits) have written to the sheet. This is what keeps two phones in agreement.
+
+How it works:
+
+- Every time the server writes a row (upsert, bulk upsert, or soft-delete), it stamps a server-side timestamp into the `serverUpdatedAt` column. This column is **server-only**: phones never send it. Using the server's clock means the cursor works correctly even if two phones disagree on what time it is.
+- The phone calls action `pullChanges` with `{ "sinceCursor": "<last cursor it saw>" }`. The first time, the cursor is empty, which means "send me everything".
+- The script returns every `Items` row and every `PurchaseEntries` row whose `serverUpdatedAt` is strictly greater than the cursor, sorted ascending by `serverUpdatedAt`, plus a new `cursor` value the phone should use on the next call.
+- Soft-deleted rows (`deleted = TRUE`) are also included in the pull — the phone needs them to apply the delete locally; it filters them out from the UI itself.
+- Each call returns at most **1000 items + 1000 entries**. If you're catching up after a long offline period and there's more, the phone just polls again with the new cursor — no row is ever skipped.
+
+You don't have to do anything for this — it runs automatically. Just keep the same Web app URL in the phone.
 
 ---
 
@@ -113,6 +131,7 @@ The script auto-creates these tabs. You should not edit them by hand.
 | `unit` | TEXT (optional) | e.g. `kg`, `pcs`, `litre`. |
 | `updatedAt` | TEXT (ISO 8601) | When this row was last changed on any phone. |
 | `deleted` | TEXT (`TRUE`/`FALSE`) | Soft-delete flag. |
+| `serverUpdatedAt` | TEXT (ISO 8601) | Server-stamped sync cursor. Auto-added in v2; do not edit by hand. |
 
 ### Tab: `PurchaseEntries`
 
@@ -127,6 +146,7 @@ The script auto-creates these tabs. You should not edit them by hand.
 | `notes` | TEXT (optional) | Free-form notes. |
 | `updatedAt` | TEXT (ISO 8601) | Last edit timestamp. |
 | `deleted` | TEXT (`TRUE`/`FALSE`) | Soft-delete flag. |
+| `serverUpdatedAt` | TEXT (ISO 8601) | Server-stamped sync cursor. Auto-added in v2; do not edit by hand. |
 
 ### Tab: `Crashes`
 

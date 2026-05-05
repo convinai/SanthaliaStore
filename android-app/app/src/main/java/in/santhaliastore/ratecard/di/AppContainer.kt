@@ -8,6 +8,7 @@ import `in`.santhaliastore.ratecard.data.repo.CrashRepository
 import `in`.santhaliastore.ratecard.data.repo.ItemRepository
 import `in`.santhaliastore.ratecard.data.repo.PurchaseRepository
 import `in`.santhaliastore.ratecard.sync.AppsScriptApi
+import `in`.santhaliastore.ratecard.sync.PullApplier
 import `in`.santhaliastore.ratecard.sync.SyncRepository
 import java.io.File
 
@@ -19,10 +20,12 @@ import java.io.File
  * DAO touch, which keeps Application.onCreate fast.
  *
  * `notifyChange` is a single shared lambda the repos call after a
- * successful write. It nudges the SyncRepository to enqueue the
- * worker. We pass a closure (rather than calling syncRepo directly)
- * to break the dependency cycle: SyncRepository depends on the two
- * data repos.
+ * successful write. It used to enqueue a background sync worker; the
+ * app no longer does background sync (battery cost on cheap phones)
+ * so this is now a no-op. Every push / pull is user-driven via
+ * Settings → "Sync now" or the Home refresh button. The lambda is
+ * kept on the call sites so we don't have to change every repo
+ * mutator just because the policy flipped.
  */
 class AppContainer(private val context: Context) {
 
@@ -36,12 +39,8 @@ class AppContainer(private val context: Context) {
     val settingsRepo: SettingsRepository by lazy { SettingsRepository(context) }
 
     private val notifyChange: () -> Unit = {
-        // Fire-and-forget: scheduling work never throws.
-        try {
-            syncRepo.enqueueIfPending()
-        } catch (t: Throwable) {
-            // Intentionally swallow — sync is best-effort.
-        }
+        // No automatic sync; the user controls every push/pull from the
+        // Home refresh button or Settings → "Sync now". See SyncRepository.
     }
 
     val itemRepo: ItemRepository by lazy {
@@ -76,13 +75,21 @@ class AppContainer(private val context: Context) {
         )
     }
 
+    val pullApplier: PullApplier by lazy {
+        PullApplier(
+            database = database,
+            itemDao = database.itemDao(),
+            entryDao = database.purchaseEntryDao()
+        )
+    }
+
     val syncRepo: SyncRepository by lazy {
         SyncRepository(
-            context = context,
             itemRepo = itemRepo,
             purchaseRepo = purchaseRepo,
             settings = settingsRepo,
             crashRepo = crashRepo,
+            pullApplier = pullApplier,
             apiFactory = apiFactory
         )
     }

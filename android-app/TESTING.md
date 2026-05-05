@@ -29,7 +29,8 @@ app/src/test/java/in/santhaliastore/ratecard/
 │   ├── FtsQueryTest.kt      # FTS4 prefix-query escape rules
 │   └── CrashRepositoryTest.kt # File-backed crash queue read/clear/truncate
 └── sync/
-    ├── SyncDtosTest.kt      # Moshi round-trip for every sync action
+    ├── SyncDtosTest.kt      # Moshi round-trip for every push action
+    ├── PullDtosTest.kt      # Moshi round-trip for the bidirectional pullChanges action
     ├── CrashEventTest.kt    # Crash payload field names + JSON shape
     └── AppsScriptApiTest.kt # Retrofit interface installs cleanly + envelope() shape
 ```
@@ -89,17 +90,28 @@ adding new behaviour.
 | Sync DTOs | `upsertEntry` field names match Apps Script contract | SyncDtosTest |
 | Sync DTOs | `bulkSync` exposes 4 arrays | SyncDtosTest |
 | Sync DTOs | response parses with / without `errors` | SyncDtosTest |
+| Pull DTOs | `pullChanges` payload exposes `sinceCursor` (empty string allowed) | PullDtosTest |
+| Pull DTOs | `PulledItem` / `PulledEntry` field names match server contract | PullDtosTest |
+| Pull DTOs | `PullChangesResponse` parses with / without optional `schemaVersion` and `time` | PullDtosTest |
+| Pull DTOs | empty server response (no items, no entries, empty cursor) parses cleanly | PullDtosTest |
 | Sync API | Retrofit can install the interface (no wildcard / annotation regression) | AppsScriptApiTest |
 | Sync API | `envelope()` builds correct JSON for `health`, `upsertItem`, `bulkSync` | AppsScriptApiTest |
 | Item repo | renaming an item's code repoints purchase history atomically (FK satisfied at every step, repointed entries flagged `pendingSync = 1`) | Manual smoke (needs Room, see "Rename item code…" entries below) |
 | Add/Edit item nav | after a rename, the Edit screen hands the new code back so the navigator pops the stale Item Detail and pushes a fresh one at the new code | Manual smoke ("Rename navigation lands on the new code" below) |
 | Item Detail safety | a stale Item Detail (code now soft-deleted via rename or delete) shows the "Yeh item ab nahi raha" state and hides the FAB, so writes cannot orphan against a dead code | Manual smoke ("Stale Item Detail refuses writes" below) |
 | Layout containment | Home row, Item Detail header, and history rows stay single-line on extreme code/name/price values | Manual smoke ("Long values don't break layouts" below) |
+| SyncRepository | `runFullSyncNow()` performs pull → apply → push in that order, aborting before push if pull fails | Manual smoke ("Bidirectional sync via Home refresh" / "Pull failure aborts before push" below) |
 | SyncRepository | `runFullSyncNow()` writes lastSyncedAt on success, lastSyncError on failure | Manual smoke ("Sync now success/failure surfacing" below) |
-| SyncRepository | `runFullSyncNow()` returns `AppResult.Ok(0)` when nothing pending and still stamps lastSyncedAt | Manual smoke ("Sync now after empty mark" below) |
-| SyncWorker | success path stamps lastSyncedAt and clears lastSyncError | Manual smoke ("Auto sync after item add" below) |
-| SyncWorker | failure path writes lastSyncError (visible on Settings) | Manual smoke ("Bad URL surfaces in Settings" below) |
-| SyncWorker | retries are capped at MAX_ATTEMPTS so a bad URL doesn't bounce forever | Manual smoke ("Bad URL surfaces in Settings" below) |
+| SyncRepository | `runFullSyncNow()` returns `AppResult.Ok(SyncOutcome(0,0,0))` when nothing pending AND nothing pulled, still stamps lastSyncedAt | Manual smoke ("Sync now after empty mark" below) |
+| PullApplier | server changes apply atomically inside one Room transaction (items first, entries second, FK held) | Manual smoke ("First-install pull populates the local DB" below) |
+| PullApplier | last-writer-wins on `updatedAt` — pulled row newer than local overwrites and clears `pendingSync`; pulled row older skips | Manual smoke ("Conflict resolution: local edit wins / server edit wins" below) |
+| PullApplier | pulled `deleted = true` row writes a tombstone locally so the row disappears from the UI | Manual smoke ("Bidirectional sync via Home refresh" — soft-delete propagation step) |
+| Pull cursor | `setSheetUrl` resets `pullCursor` to empty so a phone repointed at a new sheet pulls a full dataset | Manual smoke ("Switching sheet URL re-pulls everything" below) |
+| No background sync | nothing is enqueued via WorkManager any more — `notifyChange` is a no-op and SyncWorker no longer exists | Manual smoke ("No auto sync after item add" below) |
+| Home screen | Top-bar refresh button runs the same pull-then-push sync as Settings | Manual smoke ("Bidirectional sync via Home refresh" below) |
+| Home screen | Refresh button swaps to a 24 dp spinner while syncing without shifting the app bar layout | Manual smoke ("Home refresh button feedback" below) |
+| Home screen | "Last sync" line under the search bar shows relative time and "Abhi tak sync nahi hua" pre-first-sync | Manual smoke ("Home last-sync label" below) |
+| Snackbar copy | Push-only / pull-only / combined / nothing-new outcomes each render their own Hinglish line on Home and Settings | Manual smoke ("Bidirectional sync via Home refresh" below) |
 | Crash DTOs | `CrashEvent` field names match the Apps Script `Crashes` tab columns verbatim | CrashEventTest |
 | Crash DTOs | `appVersionCode` serialises as a JSON number, not a string | CrashEventTest |
 | Crash DTOs | `LogCrashesPayload` exposes a single `crashes` array | CrashEventTest |
@@ -143,19 +155,49 @@ surface.
 - [ ] **Delete item** — confirm dialog appears; entry history is wiped on confirm
 - [ ] **Delete entry** — confirm dialog appears; entry disappears from item-detail history
 - [ ] **Search** — typing partial code or name (Hinglish or English) filters the list within ~300 ms
-- [ ] **Sync now** — tapping the Sync button pushes every active item + entry to the sheet, even rows that synced previously
-- [ ] **Sync now success/failure surfacing** — with a working URL the snackbar shows "Sync ho gaya — N rows" and `lastSyncedAt` updates on Settings; with a deliberately wrong URL the snackbar shows "Sync nahi hua: …" and the same error appears in red under "Pichhli error: …" on Settings (no silent failure path)
-- [ ] **Sync now after empty mark** — tap "Sync now" twice in a row; the second tap should still show "Sync ho gaya — kuch naya nahi" (zero processed) and `lastSyncedAt` should still update — proving the success codepath fires even when there's nothing pending
+- [ ] **Bidirectional sync via Home refresh** — On Phone A, add a new item, tap the Home top-right refresh button, watch for "Sync ho gaya — 1 rows upload" snackbar. On Phone B (same Sheet URL), tap refresh, watch for "Sync ho gaya — 1 nayi entries" snackbar and confirm the item now appears in the list. The "Last sync" timestamp under the search bar should update to "abhi abhi" / "1 minute pehle" on each phone. With both sides quiet, tapping refresh again on either phone should show "Sab kuch sync ho gaya — kuch naya nahi". When Phone A has unsynced edits AND new entries are waiting on the server, the snackbar should read "Sync ho gaya — N upload, M download".
+- [ ] **Home refresh button feedback** — tap the refresh button; the icon swaps to a 24 dp spinner in the same slot, the rest of the top app bar (logo + Settings gear) does NOT shift horizontally, and the button is un-tappable until the sync resolves. Double-tapping during a sync does NOT spawn a second sync.
+- [ ] **Home last-sync label** — on a fresh install (lastSyncedAt = 0) the line under the search bar reads "Abhi tak sync nahi hua". After the first successful sync it flips to "Last sync: abhi abhi"; navigate away for a few minutes and return — it now reads "Last sync: N minute pehle". The line is right-aligned, in `bodySmall` `onSurfaceVariant`, single line.
+- [ ] **Sync now** — tapping the Sync button pulls server changes first, then pushes any locally-pending rows. Rows that already synced are NOT re-pushed (the new pull/push flow only sends genuinely pending edits, in contrast to the old "mark-all-pending" force-resync behaviour).
+- [ ] **Sync now success/failure surfacing** — with a working URL the snackbar shows the bidirectional outcome (combined / push-only / pull-only / nothing-new) and `lastSyncedAt` updates on Settings; with a deliberately wrong URL the snackbar shows "Sync nahi hua: …" and the same error appears in red under "Pichhli error: …" on Settings (no silent failure path)
+- [ ] **Sync now after empty mark** — tap "Sync now" twice in a row; the second tap should show the "kuch naya nahi" snackbar (zero pushed, zero pulled) and `lastSyncedAt` should still update — proving the success codepath fires even when both sides are quiet
 - [ ] **Pending count visible** — after editing an item, the Settings screen shows "N rows sync hone baaki hain"; after a successful sync it switches to "Sab kuch sync ho gaya hai"
 - [ ] **View details affordance** — tapping "Details dekhein" on Settings shows the human-formatted last-sync timestamp, pending count, and (if any) the verbatim last error in a wrap-friendly dialog
-- [ ] **Auto sync after item add** — add a single item with the URL configured → within 30 s the worker picks up the change, the pending count drops to 0, `lastSyncedAt` updates, and the row appears in the sheet
-- [ ] **Bad URL surfaces in Settings** — set the URL to something that 404s, tap "Sync now" → the snackbar shows the failure, the red "Pichhli error" line is populated, and `lastSyncedAt` stays unchanged. After a few minutes (≤ MAX_ATTEMPTS retries via the worker) WorkManager stops bouncing the work — the "Pichhli error" remains the last reported failure
+- [ ] **No auto sync after item add** — add a single item with the URL configured → wait 5+ minutes WITHOUT tapping any sync button. The pending count must stay at 1; `lastSyncedAt` must NOT update; the row must NOT appear in the sheet. (We dropped background sync to save battery — the user controls every push.) The instant the user taps Home refresh or Settings → "Sync now", the row goes through.
+- [ ] **Bad URL surfaces in Settings** — set the URL to something that 404s, tap "Sync now" → the snackbar shows the failure, the red "Pichhli error" line is populated, and `lastSyncedAt` stays unchanged. The error stays put until the next successful sync (no background retries any more — fix the URL and tap "Sync now" again).
 - [ ] **Sync indicator** — pending icon flips to green check after successful sync; error state on a bad URL
 - [ ] **Connection test** — Settings → Test connection shows green when the URL is good, red on a 404 / mismatched script
 - [ ] **PIN lock** — enabling and entering a PIN gates the next cold start; disabling clears it
 - [ ] **Rotation / config change** — adding-item form preserves typed values across orientation flip
 - [ ] **Update install** — a freshly built APK installs in place over the previously installed one without uninstall (verifies the stable keystore)
 - [ ] **Crash captured + uploaded** — Force a crash (e.g. a debug-only `throw RuntimeException("smoke")` button or `adb shell am crash`), confirm the system "App has stopped" dialog still appears (proves we delegated to the previous handler), reopen the app, confirm `<filesDir>/crashes.log` was written (`adb shell run-as in.santhaliastore.ratecard.debug cat files/crashes.log`), trigger a sync, then check that the Google Sheet's `Crashes` tab gained one row with the expected `crashId`, `appVersion`, `androidVersion`, `deviceModel`, `threadName`, `message`, and a non-empty `stackTrace`. After the sync, `crashes.log` should be absent (or only contain rows that are still pending). Re-trigger a sync without producing a new crash — the `Crashes` tab should NOT gain a duplicate row (server-side `crashId` dedup).
+
+## Bidirectional sync (multi-device)
+
+These checks rely on a real Apps Script web app + a second physical
+phone (or two emulators) pointed at the same Sheet URL. Run them after
+any change to `SyncRepository`, `PullApplier`, or the Apps Script
+`pullChanges` action.
+
+- [ ] **First-install pull populates the local DB** — Provision a clean install (Settings → "Clear data" or `adb shell pm clear in.santhaliastore.ratecard.debug`). Set the Sheet URL on the empty install. Tap Home refresh. The snackbar should report `M items + K entries downloaded`. Open Home — every active item from the sheet is in the list. Open one item — its full purchase history is visible. None of the pulled rows should be flagged "pending" (Settings pending count = 0). Sub-checks:
+  - Pulled items / entries are written with `pendingSync = false` (verify via `adb shell run-as ... sqlite3 databases/ratecard.db "SELECT COUNT(*) FROM items WHERE pendingSync=1"` → must be 0).
+  - Server-side soft-deleted rows (`deleted = 1` on the sheet) come down as tombstones — they don't appear in Home but they are present in the DB so a future re-add of the same code overwrites correctly.
+- [ ] **Bidirectional sync via Home refresh** — Two phones (A and B) on the same Sheet URL, both already bootstrapped:
+  1. On A, add item `Z` and one entry. Tap Home refresh → snackbar shows "1 upload" (or combined if there was anything on the server).
+  2. On B, tap Home refresh → snackbar shows "1 nayi entries / 1 nayi item" (or combined). `Z` now appears in B's list; opening `Z` shows the entry from A.
+  3. On B, edit `Z`'s name. Tap refresh → snackbar shows "1 upload".
+  4. On A, tap refresh → name update lands on A.
+  5. On A, soft-delete `Z`. Tap refresh.
+  6. On B, tap refresh → `Z` disappears from the list (tombstone applied).
+- [ ] **Conflict resolution: local edit wins / server edit wins** — Two phones, both bootstrapped, both with item `X`:
+  1. Disable network on B. On B, edit `X`'s name to "B-name" (locally pending).
+  2. On A, edit `X`'s name to "A-name". Tap refresh on A — pushes successfully.
+  3. Re-enable network on B. Tap refresh on B.
+  4. Expected: B's local "B-name" wins because B's `updatedAt` is strictly newer than A's (B edited last, regardless of which phone synced first). The pull skips A's older row, the push then sends "B-name" up. Verify on the sheet — final value is "B-name".
+  5. Now on A, tap refresh again → A pulls "B-name" from the server. Both phones converge.
+- [ ] **Pull failure aborts before push** — On a phone with one pending local edit, deliberately break the URL (point at a 404). Tap refresh. The snackbar must show the failure. Verify in the sheet that the local pending edit was NOT pushed (we abort before push to avoid clobbering server state we couldn't read). Pending count stays > 0; restoring the URL and re-tapping refresh resolves both sides.
+- [ ] **Switching sheet URL re-pulls everything** — Phone is fully synced against Sheet 1 (some non-zero `pullCursor` is stored). On Settings, change the Sheet URL to a different sheet (Sheet 2 with different items). Tap Home refresh. The snackbar should report a fresh full-pull from Sheet 2 (items + entries counts equal whatever Sheet 2 contains). The local DB now reflects Sheet 2; Sheet 1's items that aren't in Sheet 2 are NOT removed (they're orphan locally — a fresh install would have been cleaner, but the cursor reset alone is enough for the user-visible "I changed sheets and pull works" smoke).
+- [ ] **Cursor advances incrementally** — After a successful pull, immediately tap refresh again. The second pull should report `0 items + 0 entries` because the cursor advanced past everything. (If you see the same counts twice, the cursor isn't being persisted — bug in `SettingsRepository.setPullCursor` or the Apps Script's `pullChanges` cursor logic.)
 
 ## Stable signing keystore
 

@@ -43,10 +43,41 @@ class SettingsRepository(private val context: Context) {
 
     val lastForegroundAt: Flow<Long> = ds.data.map { it[KEY_LAST_FG_AT] ?: 0L }
 
+    /**
+     * Opaque incremental-pull cursor handed to us by the server on the
+     * last successful `pullChanges` call. Empty string means "I have
+     * nothing yet — send everything", which is exactly what we want
+     * on a fresh install or after the user points the phone at a new
+     * sheet (we reset it inside [setSheetUrl]).
+     */
+    val pullCursor: Flow<String> = ds.data.map { it[KEY_PULL_CURSOR].orEmpty() }
+
     /* --------------------------- mutators ------------------------------ */
 
+    /**
+     * Persist the sheet URL. Resetting the URL also resets [pullCursor]
+     * to empty so a phone repointed at a different sheet pulls a full
+     * dataset on its next sync — otherwise the device would only ask
+     * the new sheet for changes since the OLD sheet's cursor, which is
+     * meaningless on the new spreadsheet and would silently leave
+     * the local DB in a half-populated state.
+     */
     suspend fun setSheetUrl(url: String) {
-        ds.edit { it[KEY_SHEET_URL] = url.trim() }
+        ds.edit {
+            val trimmed = url.trim()
+            val previous = it[KEY_SHEET_URL].orEmpty()
+            it[KEY_SHEET_URL] = trimmed
+            if (trimmed != previous) {
+                it.remove(KEY_PULL_CURSOR)
+            }
+        }
+    }
+
+    suspend fun setPullCursor(value: String) {
+        ds.edit {
+            if (value.isBlank()) it.remove(KEY_PULL_CURSOR)
+            else it[KEY_PULL_CURSOR] = value
+        }
     }
 
     suspend fun setLastSyncedNow() {
@@ -110,6 +141,7 @@ class SettingsRepository(private val context: Context) {
         val KEY_PIN_ENABLED = booleanPreferencesKey("pref_v1_pin_enabled")
         val KEY_PIN_HASH = stringPreferencesKey("pref_v1_pin_hash")
         val KEY_LAST_FG_AT = longPreferencesKey("pref_v1_last_fg_at")
+        val KEY_PULL_CURSOR = stringPreferencesKey("pref_v1_pull_cursor")
     }
 }
 

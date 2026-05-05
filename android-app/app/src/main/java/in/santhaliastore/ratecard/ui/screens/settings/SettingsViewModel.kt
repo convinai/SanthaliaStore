@@ -61,9 +61,18 @@ class SettingsViewModel(
      * Sync outcome events. The Compose layer translates these into
      * stringResource-backed snackbars so all user-visible copy stays
      * in `res/values/strings.xml` (and easy to localise later).
+     *
+     * `SyncSuccess` carries the bidirectional counts from
+     * [SyncRepository.runFullSyncNow] — pushed rows are the local
+     * pending edits that hit the sheet, pulled* are the rows the
+     * server told us about that we applied locally.
      */
     sealed interface UiEvent {
-        data class SyncSuccess(val processed: Int) : UiEvent
+        data class SyncSuccess(
+            val pushed: Int,
+            val pulledItems: Int,
+            val pulledEntries: Int
+        ) : UiEvent
         data class SyncFailure(val message: String) : UiEvent
     }
 
@@ -110,14 +119,15 @@ class SettingsViewModel(
     }
 
     /**
-     * "Sync now" — runs the push inline (NOT via WorkManager) so the
-     * outcome shows up on the Settings screen immediately. The
-     * background worker still handles auto-sync after writes.
+     * "Sync now" — runs pull → apply → push inline (no background work)
+     * so the outcome shows up on the Settings screen immediately.
      *
      * Surfaces every outcome via the snackbar channel:
-     *   - Success with rows  -> "Sync ho gaya — N rows"
-     *   - Success with zero  -> "Sync ho gaya — kuch naya nahi"
-     *   - Failure            -> the error message verbatim
+     *   - Success           -> [UiEvent.SyncSuccess] with the three
+     *                          bidirectional counts (pushed rows,
+     *                          pulled items, pulled entries).
+     *   - Failure           -> [UiEvent.SyncFailure] carrying the
+     *                          error message verbatim.
      */
     fun syncNow() {
         if (_syncing.value) return // ignore double taps
@@ -126,7 +136,11 @@ class SettingsViewModel(
             val result = syncRepo.runFullSyncNow()
             _syncing.value = false
             val event = when (result) {
-                is AppResult.Ok -> UiEvent.SyncSuccess(result.value)
+                is AppResult.Ok -> UiEvent.SyncSuccess(
+                    pushed = result.value.pushedRows,
+                    pulledItems = result.value.pulledItems,
+                    pulledEntries = result.value.pulledEntries
+                )
                 is AppResult.Err -> UiEvent.SyncFailure(result.message)
             }
             _events.trySend(event)

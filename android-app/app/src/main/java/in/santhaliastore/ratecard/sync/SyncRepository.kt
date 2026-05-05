@@ -1,12 +1,5 @@
 package `in`.santhaliastore.ratecard.sync
 
-import android.content.Context
-import androidx.work.BackoffPolicy
-import androidx.work.Constraints
-import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
 import `in`.santhaliastore.ratecard.data.db.entity.ItemEntity
 import `in`.santhaliastore.ratecard.data.db.entity.PurchaseEntryEntity
 import `in`.santhaliastore.ratecard.data.prefs.SettingsRepository
@@ -16,116 +9,116 @@ import `in`.santhaliastore.ratecard.data.repo.PurchaseRepository
 import `in`.santhaliastore.ratecard.util.AppResult
 import `in`.santhaliastore.ratecard.util.appResultOf
 import kotlinx.coroutines.flow.first
-import java.util.concurrent.TimeUnit
 
 /**
  * Orchestrator that knows how to:
  *   1) Test connectivity to the Apps Script web app.
- *   2) Push pending local changes in batches.
- *   3) Schedule a [SyncWorker] for retry with exponential backoff.
+ *   2) Pull server changes via `pullChanges` and apply them atomically.
+ *   3) Push pending local changes in batches.
  *
- * UI calls [enqueueIfPending] or [requestImmediateSync] to nudge the
- * worker; the worker then uses [pushAllPending] to do the heavy lift.
+ * This app deliberately does NOT run background sync (battery cost on
+ * a low-end phone). The user drives every sync via the Home refresh
+ * button or Settings → "Sync now"; both paths call [runFullSyncNow]
+ * which performs pull → apply → push in that order.
+ *
+ * Pull aborts before push on failure: pushing stale local rows on top
+ * of a server we couldn't read from would clobber whatever newer
+ * remote state we don't yet know about.
  */
 class SyncRepository(
-    private val context: Context,
     private val itemRepo: ItemRepository,
     private val purchaseRepo: PurchaseRepository,
     private val settings: SettingsRepository,
     private val crashRepo: CrashRepository,
+    private val pullApplier: PullApplier,
     private val apiFactory: () -> AppsScriptApi
 ) {
 
     companion object {
-        const val UNIQUE_WORK_NAME = "sync_pending"
         // The server caps a single bulkSync request at 200 changes.
         const val MAX_BATCH_SIZE = 200
         // Apps Script `logCrashes` action's per-call cap. Keep in sync
         // with the matching constant in apps-script/Code.gs.
         const val MAX_CRASHES_PER_CALL = 50
+
+        /**
+         * Legacy WorkManager unique-work tag. Kept as a constant so
+         * any UI code still observing this tag through
+         * `WorkManager.getWorkInfosForUniqueWorkFlow` keeps compiling
+         * while the UI is migrated off it. Nothing enqueues this tag
+         * any more — see the class kdoc on background sync removal.
+         */
+        const val UNIQUE_WORK_NAME = "sync_pending"
+    }
+
+    /* ------------------- legacy no-op shims --------------------------- */
+
+    /**
+     * Legacy entry point — used to enqueue a [androidx.work.WorkManager]
+     * one-shot. Background sync was removed for battery reasons; the
+     * call is preserved as a no-op so call sites that haven't been
+     * migrated yet keep compiling. Safe to delete once every caller
+     * is moved off it.
+     */
+    fun requestImmediateSync() {
+        // intentionally empty
     }
 
     /* --------------------------- public API ---------------------------- */
 
     /**
-     * Schedule a one-shot sync if there is anything pending. Safe to
-     * call from any place that mutates the DB. Cheap to call repeatedly.
-     */
-    fun enqueueIfPending() {
-        val request = OneTimeWorkRequestBuilder<SyncWorker>()
-            .setConstraints(
-                Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
-                    .build()
-            )
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
-            .build()
-
-        WorkManager.getInstance(context).enqueueUniqueWork(
-            UNIQUE_WORK_NAME,
-            ExistingWorkPolicy.KEEP, // don't pile up duplicates
-            request
-        )
-    }
-
-    /**
-     * Like [enqueueIfPending] but force-replaces any queued work so the
-     * "Sync now" button feels responsive even if a previous sync is
-     * stuck waiting for connectivity.
-     */
-    fun requestImmediateSync() {
-        val request = OneTimeWorkRequestBuilder<SyncWorker>()
-            .setConstraints(
-                Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
-                    .build()
-            )
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
-            .build()
-
-        WorkManager.getInstance(context).enqueueUniqueWork(
-            UNIQUE_WORK_NAME,
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
-    }
-
-    /**
-     * Synchronous "Sync now" — bypasses WorkManager so the Settings
-     * screen can render the outcome immediately.
+     * Synchronous "Sync now" — bidirectional, manual-trigger only.
      *
-     * Marks every row pending, then pushes inline on whatever coroutine
-     * dispatcher the caller provided. The result is mirrored into
-     * [SettingsRepository] (`lastSyncedAt` / `lastSyncError`) so the UI
-     * stays consistent whether the sync ran here or via the worker.
+     * Order is pull → apply → push so the device sees server-side
+     * changes BEFORE re-uploading its own pending edits. Reversing the
+     * order risks overwriting a newer server row with a stale local
+     * one when the local clock briefly drifted ahead.
      *
-     * Returns the count of rows the server confirmed as processed
-     * (zero is fine — it just means nothing was pending).
+     * The result is mirrored into [SettingsRepository] (`lastSyncedAt`
+     * / `lastSyncError`) so the UI stays consistent.
      */
-    suspend fun runFullSyncNow(): AppResult<Int> {
-        // Mark first, then push. If push fails the rows stay pending
-        // and the worker's next run will retry them.
-        itemRepo.markAllPendingSync()
-        purchaseRepo.markAllPendingSync()
-        val outcome = pushAllPending()
+    suspend fun runFullSyncNow(): AppResult<SyncOutcome> {
+        val url = settings.sheetUrl.first()
+        if (url.isBlank()) {
+            val message = "Sheet URL not set"
+            settings.setLastSyncError(message)
+            return AppResult.Err(message)
+        }
 
-        // Drain any pending crash reports as a separate step. We
-        // explicitly do NOT fold the result into [outcome]: a crash
-        // upload failure should not undo a successful items/entries
-        // sync (or vice versa) — they're independent payloads with
-        // independent retry semantics, and conflating them would
-        // confuse the user-facing "Sync now" success/failure surface.
+        // 1) Pull first. On failure we abort BEFORE any push so we never
+        //    overwrite newer remote state with a stale local copy.
+        val pullOutcome: PullOutcome = when (val pullResult = pullAndApply(url)) {
+            is AppResult.Err -> {
+                settings.setLastSyncError(pullResult.message)
+                return pullResult
+            }
+            is AppResult.Ok -> pullResult.value
+        }
+
+        // 2) Push our pending changes. Anything that was just pulled
+        //    is already `pendingSync = false`, so we won't echo it back.
+        val pushedRows: Int = when (val pushResult = pushAllPending()) {
+            is AppResult.Err -> {
+                settings.setLastSyncError(pushResult.message)
+                return pushResult
+            }
+            is AppResult.Ok -> pushResult.value
+        }
+
+        // 3) Best-effort crash drain. Already wrapped in pushAllPending
+        //    when there were data rows; do it explicitly here for the
+        //    "nothing to push" branch too. Failure is swallowed —
+        //    crashes retry on the next sync.
         runCatching { pushPendingCrashes() }
 
-        when (outcome) {
-            is AppResult.Ok -> {
-                settings.setLastSyncedNow()
-            }
-            is AppResult.Err -> {
-                settings.setLastSyncError(outcome.message)
-            }
-        }
-        return outcome
+        settings.setLastSyncedNow()
+        return AppResult.Ok(
+            SyncOutcome(
+                pushedRows = pushedRows,
+                pulledItems = pullOutcome.itemsApplied,
+                pulledEntries = pullOutcome.entriesApplied
+            )
+        )
     }
 
     /**
@@ -141,12 +134,40 @@ class SyncRepository(
         Unit
     }
 
+    /* --------------------------- pull ---------------------------------- */
+
+    /**
+     * Issue `pullChanges` against [url] using the persisted cursor,
+     * apply the result atomically, and persist the new cursor.
+     *
+     * The cursor is updated ONLY after [PullApplier.apply] returns
+     * successfully — if the apply throws we keep the old cursor and
+     * retry the same window on the next sync. The alternative
+     * (cursor-first) would silently drop server changes whenever a
+     * write blew up mid-transaction.
+     */
+    private suspend fun pullAndApply(url: String): AppResult<PullOutcome> = appResultOf {
+        val cursor = settings.pullCursor.first()
+        val payload = PullChangesPayload(sinceCursor = cursor)
+        val body = AppsScriptApi.envelope("pullChanges", payload)
+        val response = apiFactory().pullChanges(url, body)
+        require(response.ok) { "Server says not ok" }
+
+        val outcome = pullApplier.apply(response)
+        // Persist cursor LAST. Apply failure -> we never get here ->
+        // cursor stays put and the same window retries next sync.
+        settings.setPullCursor(response.cursor)
+        outcome
+    }
+
+    /* --------------------------- push ---------------------------------- */
+
     /**
      * Push every pending local change to the server in batches of
      * up to [MAX_BATCH_SIZE]. On success, clears `pendingSync` for
      * the rows the server confirmed.
      *
-     * Surface errors via [AppResult.Err] so the worker can decide to
+     * Surface errors via [AppResult.Err] so callers can decide to
      * retry vs. give up.
      */
     suspend fun pushAllPending(): AppResult<Int> = appResultOf {
@@ -259,7 +280,7 @@ class SyncRepository(
      *     sync picks them up.
      *   - On any failure (no URL, network, server not-ok) we leave
      *     the file in place and surface the error via [AppResult.Err]
-     *     so the worker / Settings UI can log it.
+     *     so the caller can log it.
      *
      * The Apps Script side is idempotent on `crashId`, so a duplicate
      * upload (from a phone that thought it failed but the server
@@ -315,3 +336,14 @@ class SyncRepository(
         updatedAt = updatedAt
     )
 }
+
+/**
+ * Aggregate counts surfaced by [SyncRepository.runFullSyncNow] so the
+ * UI can show "Push N, pulled M items + K entries" in a single
+ * snackbar without poking at the repository again.
+ */
+data class SyncOutcome(
+    val pushedRows: Int,
+    val pulledItems: Int,
+    val pulledEntries: Int
+)

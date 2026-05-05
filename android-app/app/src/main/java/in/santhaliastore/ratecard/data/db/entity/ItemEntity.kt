@@ -15,8 +15,8 @@ import androidx.room.PrimaryKey
  * Soft-delete columns:
  *   - `deleted` flips to true instead of removing the row, so the
  *     server sync can replay the deletion to other devices.
- *   - `pendingSync` tells the SyncWorker that this row carries unsent
- *     changes. It flips back to false once the server acks.
+ *   - `pendingSync` tells the next manual sync that this row carries
+ *     unsent changes. It flips back to false once the server acks.
  */
 @Entity(
     tableName = "items",
