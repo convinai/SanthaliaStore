@@ -23,6 +23,17 @@ object Time {
     private val PURCHASE_DATE_FMT: DateTimeFormatter = DateTimeFormatter.ISO_LOCAL_DATE
     private val DISPLAY_DATE_FMT: DateTimeFormatter =
         DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH)
+    private val DISPLAY_DATETIME_FMT: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("d MMM yyyy h:mm a", Locale.ENGLISH)
+
+    /**
+     * Hard ceiling on the fallback string returned by [displayDate] when
+     * every parse attempt fails. Picked so even a Java `Date.toString()`
+     * dump (~58 chars) gets clipped down to roughly "Tue May 05 2026"
+     * — long enough to be informative, short enough that no row layout
+     * can possibly break.
+     */
+    private const val DISPLAY_DATE_FALLBACK_MAX = 15
 
     /** Current instant as ISO 8601 with `Z` (UTC). */
     fun nowIso(): String = Instant.now().toString()
@@ -41,10 +52,59 @@ object Time {
     fun millisToLocalDate(millis: Long): String =
         Instant.ofEpochMilli(millis).atZone(ZoneId.of("UTC")).toLocalDate().format(PURCHASE_DATE_FMT)
 
-    /** Pretty version: `4 May 2026` for display in lists / headers. */
-    fun displayDate(date: String): String = runCatching {
-        LocalDate.parse(date, PURCHASE_DATE_FMT).format(DISPLAY_DATE_FMT)
-    }.getOrDefault(date)
+    /**
+     * Pretty version: `4 May 2026` for display in lists / headers.
+     *
+     * Defensive ladder — the UI must never display a multi-line locale
+     * dump (e.g. `Tue May 05 2026 00:00:00 GMT+0530 (India Standard Time)`)
+     * that would push the trailing column off the row:
+     *
+     *   1. ISO_LOCAL_DATE — the canonical wire format from the server.
+     *      Hot path; covers every value the app itself writes.
+     *   2. ISO 8601 timestamp prefix (`2026-05-05T...`). Stale payloads
+     *      from an older Apps Script version sometimes carry the time
+     *      portion; we only care about the date.
+     *   3. Last-resort clamp: return at most [DISPLAY_DATE_FALLBACK_MAX]
+     *      characters of the raw input so a Java `Date.toString()` locale
+     *      dump degrades to e.g. "Tue May 05 2026" instead of overflowing
+     *      the row. We don't try to parse that format because it varies
+     *      across locales and the cost of getting it wrong is far higher
+     *      than just truncating.
+     */
+    fun displayDate(date: String): String {
+        if (date.isBlank()) return ""
+        // 1) Canonical YYYY-MM-DD.
+        runCatching {
+            return LocalDate.parse(date, PURCHASE_DATE_FMT).format(DISPLAY_DATE_FMT)
+        }
+        // 2) ISO 8601 timestamp prefix — `2026-05-05T...`. Cheap shape
+        //    check so we don't pay parser cost on obviously-wrong input.
+        if (date.length >= 10 && date[4] == '-' && date[7] == '-') {
+            runCatching {
+                return LocalDate.parse(date.substring(0, 10), PURCHASE_DATE_FMT)
+                    .format(DISPLAY_DATE_FMT)
+            }
+        }
+        // 3) Anything else (bad format, locale Date.toString(), user-typed
+        //    label) — clamp to a layout-safe length and return as-is.
+        return date.take(DISPLAY_DATE_FALLBACK_MAX)
+    }
+
+    /**
+     * Pretty version with date + time, used for the "Last sync: …" line
+     * on Home and Settings. Format: `5 May 2026 2:30 PM`.
+     *
+     * `epochMillis <= 0` is the sentinel for "never synced" — callers
+     * should branch on that themselves and show a localised label, but
+     * we still guard against it here so a stray call site can't render
+     * "1 Jan 1970" by accident.
+     */
+    fun displayDateTime(epochMillis: Long): String {
+        if (epochMillis <= 0L) return ""
+        return Instant.ofEpochMilli(epochMillis)
+            .atZone(ZoneId.systemDefault())
+            .format(DISPLAY_DATETIME_FMT)
+    }
 
     /**
      * Hinglish relative-time string: "abhi abhi", "5 minute pehle",

@@ -1,9 +1,6 @@
 package `in`.santhaliastore.ratecard.ui.screens.add_item
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,12 +12,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CalendarMonth
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -64,7 +62,7 @@ import `in`.santhaliastore.ratecard.util.Time
  * the current rate at item-creation time without bouncing through a
  * second screen. The section is hidden in edit mode.
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddEditItemScreen(
     editingCode: String?,
@@ -206,35 +204,46 @@ fun AddEditItemScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            OutlinedTextField(
-                value = unit,
-                onValueChange = { unit = it },
-                label = { Text(stringResource(R.string.field_item_unit)) },
-                supportingText = { Text(stringResource(R.string.field_item_unit_helper)) },
-                singleLine = true,
-                enabled = !state.isLoading && !state.isSaving,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            // Quick-pick chips for common kirana units. Tapping fills the
-            // unit field — much faster than typing on a low-end device.
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.fillMaxWidth()
+            // Unit picker — anchor field allows free typing for unusual
+            // units (Tola, Mutthi, etc.) while the dropdown surfaces the
+            // common kirana units without flooding the screen with chips.
+            //
+            // `expanded` is intentionally decoupled from the text content:
+            // typing must not slam the menu shut, but selecting an item
+            // and dismissing must.
+            var unitMenuExpanded by rememberSaveable { mutableStateOf(false) }
+            ExposedDropdownMenuBox(
+                expanded = unitMenuExpanded,
+                onExpandedChange = { unitMenuExpanded = !unitMenuExpanded }
             ) {
-                units.forEach { suggestion ->
-                    AssistChip(
-                        onClick = { unit = suggestion },
-                        label = { Text(suggestion) },
-                        colors = AssistChipDefaults.assistChipColors(
-                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                            labelColor = MaterialTheme.colorScheme.onSecondaryContainer
+                OutlinedTextField(
+                    value = unit,
+                    onValueChange = { unit = it },
+                    label = { Text(stringResource(R.string.field_item_unit)) },
+                    supportingText = { Text(stringResource(R.string.field_item_unit_helper)) },
+                    singleLine = true,
+                    enabled = !state.isLoading && !state.isSaving,
+                    trailingIcon = {
+                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = unitMenuExpanded)
+                    },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .menuAnchor()
+                )
+                ExposedDropdownMenu(
+                    expanded = unitMenuExpanded,
+                    onDismissRequest = { unitMenuExpanded = false }
+                ) {
+                    units.forEach { suggestion ->
+                        DropdownMenuItem(
+                            text = { Text(suggestion) },
+                            onClick = {
+                                unit = suggestion
+                                unitMenuExpanded = false
+                            }
                         )
-                    )
+                    }
                 }
             }
 

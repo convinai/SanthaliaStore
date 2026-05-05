@@ -372,8 +372,12 @@ function handleBulkSync_(payload) {
  *     keeps using `nowIso_()` for every stamp.
  *   - Rows are sorted ascending by `serverUpdatedAt` so the client can
  *     apply them in chronological order.
- *   - Soft-deleted rows ARE included — the client needs to apply the
- *     delete locally and is responsible for hiding them from the UI.
+ *   - Soft-deleted rows are NOT included in the response. The client
+ *     explicitly opted out of cross-device delete propagation; each
+ *     phone manages its own deletes locally. The cursor still advances
+ *     past tombstone events so we don't keep re-evaluating them on
+ *     every pull. To bring a phone back in line with the sheet, the
+ *     user runs the in-app "Sab data reset karein" action.
  *   - Per-sheet cap of PULL_LIMIT rows. If we hit the cap, the next
  *     poll with the new cursor will pick up where we left off.
  *
@@ -403,26 +407,28 @@ function handlePullChanges_(payload) {
 
   // Filter / sort / project happen OUTSIDE the lock — they only touch
   // the in-memory snapshot and never the spreadsheet.
-  const items   = collectChangedRows_(itemsCtx,   ITEMS_HEADERS,   cursor, PULL_LIMIT, rowToItemDto_);
-  const entries = collectChangedRows_(entriesCtx, ENTRIES_HEADERS, cursor, PULL_LIMIT, rowToEntryDto_);
+  //
+  // collectChangedRows_ returns BOTH the live (non-tombstone) DTOs AND
+  // the max serverUpdatedAt observed across ALL changed rows (tombstones
+  // included). We need the latter so the cursor still advances past
+  // soft-delete events on the server — otherwise the same tombstone
+  // would be re-evaluated on every subsequent pull.
+  const itemsResult   = collectChangedRows_(itemsCtx,   ITEMS_HEADERS,   cursor, PULL_LIMIT, rowToItemDto_);
+  const entriesResult = collectChangedRows_(entriesCtx, ENTRIES_HEADERS, cursor, PULL_LIMIT, rowToEntryDto_);
 
-  // New cursor = max serverUpdatedAt across both result sets. If nothing
-  // changed (both arrays empty) we hand the client back the cursor it
-  // sent us — never null — so it can keep polling without re-loading
-  // everything from scratch.
+  // New cursor = max serverUpdatedAt seen across BOTH sheets, including
+  // tombstone rows that were filtered out of the response. If nothing
+  // changed at all we hand the client back the cursor it sent us —
+  // never null — so it can keep polling without re-loading everything.
   let newCursor = cursor || '';
-  for (let i = 0; i < items.length; i++) {
-    if (items[i].serverUpdatedAt > newCursor) newCursor = items[i].serverUpdatedAt;
-  }
-  for (let i = 0; i < entries.length; i++) {
-    if (entries[i].serverUpdatedAt > newCursor) newCursor = entries[i].serverUpdatedAt;
-  }
+  if (itemsResult.maxServerUpdatedAt   > newCursor) newCursor = itemsResult.maxServerUpdatedAt;
+  if (entriesResult.maxServerUpdatedAt > newCursor) newCursor = entriesResult.maxServerUpdatedAt;
 
   return jsonResponse_({
     ok: true,
     action: 'pullChanges',
-    items: items,
-    entries: entries,
+    items: itemsResult.dtos,
+    entries: entriesResult.dtos,
     cursor: newCursor,
     schemaVersion: SCHEMA_VERSION,
     time: nowIso_()
@@ -1018,10 +1024,34 @@ function parseCursor_(raw) {
  * Pull-only helper. Walks `ctx.values`, filters rows whose
  * `serverUpdatedAt > cursor`, sorts ascending, caps at `limit`,
  * and projects each row through `toDto`.
+ *
+ * Soft-deleted rows (tombstones) are dropped from the response BUT still
+ * contribute to `maxServerUpdatedAt`, so the cursor advances past delete
+ * events on the server. Without that, a tombstone would re-show up on
+ * every pull forever (we'd compare-and-skip it again and again, and the
+ * cursor would never move past it). The client explicitly does not want
+ * tombstones in the payload — see `handlePullChanges_` for the rationale.
+ *
+ * Returns:
+ *   {
+ *     dtos:                Object[],   // live (non-tombstone) rows, projected
+ *     maxServerUpdatedAt:  string      // max serverUpdatedAt across ALL changed
+ *                                      // rows including tombstones, or '' if none
+ *   }
+ *
+ * Note: the Crashes sheet has no `deleted` column. This helper is only
+ * called for Items and PurchaseEntries; Crashes uses a different
+ * (write-only) path entirely. We still defensively guard against a
+ * missing `deleted` column so a hand-edit on the sheet can't crash a
+ * pull — `parseBool_(undefined)` returns false (a v1 sheet pre-migration
+ * with an empty `deleted` cell is treated as "not deleted", which is
+ * the correct fallback semantic).
  */
 function collectChangedRows_(ctx, expectedHeaders, cursor, limit, toDto) {
   const sIdx = ctx.colIndex.serverUpdatedAt;
-  const out = [];
+  const dIdx = ctx.colIndex.deleted; // may be undefined on a sheet without the column
+  const candidates = [];
+  let maxServerUpdatedAt = '';
 
   for (let r = 0; r < ctx.values.length; r++) {
     const row = ctx.values[r];
@@ -1036,11 +1066,22 @@ function collectChangedRows_(ctx, expectedHeaders, cursor, limit, toDto) {
     // doesn't get an undefined-shaped row.
     if (!sUpdated) continue;
     if (cursor && sUpdated <= cursor) continue;
-    out.push(row);
+
+    // This row is "changed" relative to the cursor. Bump the cursor
+    // ceiling regardless of whether it's a tombstone — that's how we
+    // make sure the cursor advances past delete events too.
+    if (sUpdated > maxServerUpdatedAt) maxServerUpdatedAt = sUpdated;
+
+    // Drop tombstones from the response itself. Done AFTER the cursor
+    // ceiling update so we still acknowledge the delete on the cursor.
+    const isDeleted = (typeof dIdx === 'number') ? parseBool_(row[dIdx]) : false;
+    if (isDeleted) continue;
+
+    candidates.push(row);
   }
 
   // Ascending by serverUpdatedAt, ties stable.
-  out.sort(function (a, b) {
+  candidates.sort(function (a, b) {
     const av = toIsoTimestamp_(a[sIdx]);
     const bv = toIsoTimestamp_(b[sIdx]);
     if (av < bv) return -1;
@@ -1049,8 +1090,9 @@ function collectChangedRows_(ctx, expectedHeaders, cursor, limit, toDto) {
   });
 
   // Apply the per-sheet cap. Slice + map is fine at 1000 rows.
-  const capped = (out.length > limit) ? out.slice(0, limit) : out;
-  return capped.map(function (row) { return toDto(row, ctx.colIndex); });
+  const capped = (candidates.length > limit) ? candidates.slice(0, limit) : candidates;
+  const dtos = capped.map(function (row) { return toDto(row, ctx.colIndex); });
+  return { dtos: dtos, maxServerUpdatedAt: maxServerUpdatedAt };
 }
 
 /** Sheet row → Items DTO sent to the client. */

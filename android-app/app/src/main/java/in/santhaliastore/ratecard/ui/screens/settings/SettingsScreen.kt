@@ -66,8 +66,7 @@ import `in`.santhaliastore.ratecard.BuildConfig
 import `in`.santhaliastore.ratecard.R
 import `in`.santhaliastore.ratecard.ui.screens.settings.SettingsViewModel.TestResult
 import `in`.santhaliastore.ratecard.ui.screens.settings.SettingsViewModel.UiEvent
-import java.text.DateFormat
-import java.util.Date
+import `in`.santhaliastore.ratecard.util.Time
 
 /**
  * Settings screen.
@@ -187,12 +186,13 @@ fun SettingsScreen(
 
             // Pre-compute the human-friendly last-sync string once: it's
             // used both inside the summary card and as a standalone line
-            // when the editor is open.
+            // when the editor is open. We deliberately use Time.displayDateTime
+            // (not the system DateFormat) so Settings and Home speak in
+            // the same absolute format — `5 May 2026 2:30 PM`.
             val lastSyncText = if (state.lastSyncedAt > 0L) {
                 stringResource(
                     R.string.sync_last_synced_format,
-                    DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-                        .format(Date(state.lastSyncedAt))
+                    Time.displayDateTime(state.lastSyncedAt)
                 )
             } else {
                 stringResource(R.string.sync_never)
@@ -659,8 +659,7 @@ private fun SyncDetailsDialog(
     val lastSyncText = if (lastSyncedAt > 0L) {
         stringResource(
             R.string.sync_last_synced_format,
-            DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-                .format(Date(lastSyncedAt))
+            Time.displayDateTime(lastSyncedAt)
         )
     } else {
         stringResource(R.string.sync_never)

@@ -51,7 +51,7 @@
     <string name="field_item_name">Item ka naam</string>
     <string name="field_item_name_helper">Aap kaise pehchaante hain</string>
     <string name="field_item_unit">Unit (optional)</string>
-    <string name="field_item_unit_helper">Jaise Kg, Litre, Adad</string>
+    <string name="field_item_unit_helper">Jaise Kg, Litre, Adad — list se chunein ya custom likhein</string>
     <string name="error_code_empty">Code zaroori hai</string>
     <string name="error_code_duplicate">Yeh code already use ho raha hai</string>
     <string name="error_name_empty">Naam zaroori hai</string>

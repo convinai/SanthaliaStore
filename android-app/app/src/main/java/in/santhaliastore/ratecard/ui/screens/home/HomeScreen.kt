@@ -44,7 +44,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -62,7 +61,6 @@ import `in`.santhaliastore.ratecard.ui.components.SearchField
 import `in`.santhaliastore.ratecard.ui.screens.home.HomeViewModel.UiEvent
 import `in`.santhaliastore.ratecard.util.Money
 import `in`.santhaliastore.ratecard.util.Time
-import java.time.Instant
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,7 +77,6 @@ fun HomeScreen(
     val items = viewModel.pagedItems.collectAsLazyPagingItems()
     val listState = rememberLazyListState()
 
-    val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
     // Resolve the Hinglish snackbar copy here (not in the VM) so every
@@ -121,21 +118,22 @@ fun HomeScreen(
     val neverSyncedLabel = stringResource(R.string.home_never_synced)
     val lastSyncFormat = stringResource(R.string.home_last_sync_format)
 
-    // Format the relative-time string off the timestamp + context.
+    // Format the absolute-time string off the timestamp.
     // `derivedStateOf` keeps the recomposition scoped to just the
     // status line — the rest of Home doesn't re-render when the
     // value flips.
     //
-    // We deliberately do NOT poll a clock: "5 min pehle" staying
-    // "5 min pehle" until the user taps refresh is fine; tapping
-    // refresh updates the timestamp and the line snaps to "abhi abhi".
-    val lastSyncLine by remember(lastSyncedAt, context) {
+    // We use absolute format ("5 May 2026 2:30 PM") rather than
+    // relative ("5 min pehle") because two phone owners comparing
+    // notes care about WHEN the data was fresh, not how long ago
+    // that was — a relative label silently changes meaning the
+    // moment they walk away from the screen.
+    val lastSyncLine by remember(lastSyncedAt) {
         derivedStateOf {
             if (lastSyncedAt <= 0L) {
                 neverSyncedLabel
             } else {
-                val iso = Instant.ofEpochMilli(lastSyncedAt).toString()
-                lastSyncFormat.format(Time.relativeFromIsoInstant(context, iso))
+                lastSyncFormat.format(Time.displayDateTime(lastSyncedAt))
             }
         }
     }
@@ -346,7 +344,17 @@ private fun ItemRow(
 
             // Trailing: price + date stacked, end-aligned. When there
             // is no purchase yet, fall back to a single muted caption.
-            Column(horizontalAlignment = Alignment.End) {
+            //
+            // The whole column is capped at 140 dp so even if a stray
+            // string slips through (e.g. a Date.toString() locale dump
+            // from a misbehaving server payload) the row physically
+            // cannot push the leading code chip + name off-screen. The
+            // children also clamp themselves to maxLines=1 + ellipsis,
+            // belt-and-suspenders style.
+            Column(
+                horizontalAlignment = Alignment.End,
+                modifier = Modifier.widthIn(max = 140.dp)
+            ) {
                 if (row.lastPrice != null) {
                     val rateText = if (!row.unit.isNullOrBlank()) {
                         stringResource(R.string.last_rate_format, Money.plain(row.lastPrice), row.unit)
@@ -359,11 +367,7 @@ private fun ItemRow(
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        // Cap the trailing rate so a hugely long price
-                        // (e.g. ₹9999999.99 / something) cannot crowd
-                        // the leading code+name out of view.
-                        modifier = Modifier.widthIn(max = 140.dp)
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                     if (lastUpdateText.isNotEmpty()) {
                         Spacer(Modifier.height(2.dp))
@@ -371,14 +375,17 @@ private fun ItemRow(
                             text = lastUpdateText,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                     }
                 } else {
                     Text(
                         text = stringResource(R.string.home_no_purchase_caption),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                 }
             }

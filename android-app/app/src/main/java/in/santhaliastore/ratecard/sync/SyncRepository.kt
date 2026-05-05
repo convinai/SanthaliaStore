@@ -21,11 +21,15 @@ import kotlinx.coroutines.flow.first
  * This app deliberately does NOT run background sync (battery cost on
  * a low-end phone). The user drives every sync via the Home refresh
  * button or Settings → "Sync now"; both paths call [runFullSyncNow]
- * which performs pull → apply → push in that order.
+ * which performs **push → pull** in that order.
  *
- * Pull aborts before push on failure: pushing stale local rows on top
- * of a server we couldn't read from would clobber whatever newer
- * remote state we don't yet know about.
+ * Why push-first: the user's mental model is "my edits go up, then I
+ * read back what other phones did". If push fails (no network, server
+ * down) we abort BEFORE pulling — pulling now would inject server state
+ * on top of edits we never managed to record on the server, which
+ * looks to the user like silent data loss. Conflict resolution still
+ * works because Apps Script applies last-write-wins by `updatedAt`
+ * regardless of which side acted first.
  */
 class SyncRepository(
     private val database: AppDatabase,
@@ -72,10 +76,14 @@ class SyncRepository(
     /**
      * Synchronous "Sync now" — bidirectional, manual-trigger only.
      *
-     * Order is pull → apply → push so the device sees server-side
-     * changes BEFORE re-uploading its own pending edits. Reversing the
-     * order risks overwriting a newer server row with a stale local
-     * one when the local clock briefly drifted ahead.
+     * Order is **push → pull** so the user's local edits go up before
+     * we read back any server-side changes. If push fails we abort
+     * BEFORE pulling: pulling now would inject server state on top of
+     * edits the user thought had been saved, masking the failure.
+     *
+     * Conflict resolution is independent of order — Apps Script applies
+     * last-write-wins by `updatedAt`, so whichever side has the newer
+     * timestamp wins regardless of which side acted first.
      *
      * The result is mirrored into [SettingsRepository] (`lastSyncedAt`
      * / `lastSyncError`) so the UI stays consistent.
@@ -88,18 +96,9 @@ class SyncRepository(
             return AppResult.Err(message)
         }
 
-        // 1) Pull first. On failure we abort BEFORE any push so we never
-        //    overwrite newer remote state with a stale local copy.
-        val pullOutcome: PullOutcome = when (val pullResult = pullAndApply(url)) {
-            is AppResult.Err -> {
-                settings.setLastSyncError(pullResult.message)
-                return pullResult
-            }
-            is AppResult.Ok -> pullResult.value
-        }
-
-        // 2) Push our pending changes. Anything that was just pulled
-        //    is already `pendingSync = false`, so we won't echo it back.
+        // 1) PUSH local pending changes first. If push fails, abort —
+        //    pulling now would overwrite the user's unsaved edits with
+        //    server state, hiding the failure.
         val pushedRows: Int = when (val pushResult = pushAllPending()) {
             is AppResult.Err -> {
                 settings.setLastSyncError(pushResult.message)
@@ -108,12 +107,27 @@ class SyncRepository(
             is AppResult.Ok -> pushResult.value
         }
 
-        // 3) Best-effort crash drain. Already wrapped in pushAllPending
-        //    when there were data rows; do it explicitly here for the
-        //    "nothing to push" branch too. Failure is swallowed —
+        // 2) PULL server changes since the last cursor and apply
+        //    atomically. Anything we just pushed is already `pendingSync
+        //    = false` locally and the server's response is keyed on the
+        //    cursor, so we won't echo our own push back.
+        val pullOutcome: PullOutcome = when (val pullResult = pullAndApply(url)) {
+            is AppResult.Err -> {
+                settings.setLastSyncError(pullResult.message)
+                return pullResult
+            }
+            is AppResult.Ok -> pullResult.value
+        }
+
+        // 3) Best-effort crash drain. `pushAllPending` already does this
+        //    when there were data rows; we do it explicitly here for
+        //    the "nothing to push" branch too. Failure is swallowed —
         //    crashes retry on the next sync.
         runCatching { pushPendingCrashes() }
 
+        // 4) Stamp success — clear any prior error and update the
+        //    last-synced-at timestamp the UI keys off.
+        settings.setLastSyncError(null)
         settings.setLastSyncedNow()
         return AppResult.Ok(
             SyncOutcome(
@@ -190,9 +204,9 @@ class SyncRepository(
         }
 
         // Step 2: full sync. With the cursor empty and the local DB
-        // empty, this becomes a one-shot bootstrap pull (server sends
-        // the entire dataset) followed by a no-op push (we have no
-        // pending rows because we just deleted them all).
+        // empty, the push step is a no-op (nothing pending — we just
+        // deleted everything) and the pull becomes a one-shot bootstrap
+        // (server sends the entire dataset because the cursor is empty).
         return runFullSyncNow()
     }
 

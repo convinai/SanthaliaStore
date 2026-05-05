@@ -17,6 +17,14 @@ ground rules we follow whenever we add features or change existing code.
    `sync/SyncDtos.kt` are pinned by `SyncDtosTest`. Any change to JSON
    field names there MUST be paired with a matching change in
    `apps-script/Code.gs`. The test exists to catch silent drift.
+4. **Sync order is push-then-pull.** `SyncRepository.runFullSyncNow()`
+   pushes any locally-pending edits FIRST, then pulls server changes.
+   On push failure we abort before pulling so server state never
+   silently overwrites unsaved local edits. Conflict resolution is
+   independent of order — Apps Script applies last-write-wins by
+   `updatedAt`. The destructive `resetLocalAndPullFresh` flow is the
+   only exception: after the wipe there's nothing to push, so the
+   resulting `runFullSyncNow` collapses to a one-shot bootstrap pull.
 
 ## Test layout
 
@@ -27,7 +35,8 @@ app/src/test/java/in/santhaliastore/ratecard/
 │   └── MoneyTest.kt         # ₹ formatting, lakh grouping, parse() tolerance
 ├── data/repo/
 │   ├── FtsQueryTest.kt      # FTS4 prefix-query escape rules
-│   └── CrashRepositoryTest.kt # File-backed crash queue read/clear/truncate
+│   ├── CrashRepositoryTest.kt # File-backed crash queue read/clear/truncate
+│   └── LatestEntryOrderingTest.kt # Pins `ORDER BY pe.date DESC, pe.updatedAt DESC`
 └── sync/
     ├── SyncDtosTest.kt      # Moshi round-trip for every push action
     ├── PullDtosTest.kt      # Moshi round-trip for the bidirectional pullChanges action
@@ -75,7 +84,12 @@ adding new behaviour.
 | --- | --- | --- |
 | util/Time | `nowIso()` returns ISO 8601 with `Z` | TimeTest |
 | util/Time | `todayLocal()` is `YYYY-MM-DD` | TimeTest |
-| util/Time | `displayDate()` formats as `d MMM yyyy`, falls back to raw on bad input | TimeTest |
+| util/Time | `displayDate()` formats canonical YYYY-MM-DD as `d MMM yyyy` | TimeTest |
+| util/Time | `displayDate()` peels date prefix off ISO 8601 timestamp (`2026-05-05T...`) | TimeTest |
+| util/Time | `displayDate()` clamps unknown formats (locale Date dumps, gibberish) to ≤ 15 chars so the home row layout cannot overflow | TimeTest |
+| util/Time | `displayDate("")` / `displayDate(" ")` return `""` | TimeTest |
+| util/Time | `displayDateTime(0L)` / negative epoch return `""` (never-synced sentinel) | TimeTest |
+| util/Time | `displayDateTime(epochMillis)` formats as `d MMM yyyy h:mm a` (timezone-independent shape) | TimeTest |
 | util/Time | `localDateToMillis` ↔ `millisToLocalDate` round-trips | TimeTest |
 | util/Time | `localDateToMillis("not-a-date")` returns null (no crash) | TimeTest |
 | util/Money | `rupees()` strips trailing zeros, uses lakh grouping | MoneyTest |
@@ -101,7 +115,11 @@ adding new behaviour.
 | Add/Edit item nav | after a rename, the Edit screen hands the new code back so the navigator pops the stale Item Detail and pushes a fresh one at the new code | Manual smoke ("Rename navigation lands on the new code" below) |
 | Item Detail safety | a stale Item Detail (code now soft-deleted via rename or delete) shows the "Yeh item ab nahi raha" state and hides the FAB, so writes cannot orphan against a dead code | Manual smoke ("Stale Item Detail refuses writes" below) |
 | Layout containment | Home row, Item Detail header, and history rows stay single-line on extreme code/name/price values | Manual smoke ("Long values don't break layouts" below) |
-| SyncRepository | `runFullSyncNow()` performs pull → apply → push in that order, aborting before push if pull fails | Manual smoke ("Bidirectional sync via Home refresh" / "Pull failure aborts before push" below) |
+| Layout containment | Home row trailing column is hard-capped at 140 dp so a stray Date.toString() / over-long timestamp can never crowd out the leading code chip + name | Manual smoke ("Long timestamp doesn't break the home row" below) |
+| Home screen | "Last sync" line uses absolute `displayDateTime` format (`5 May 2026 2:30 PM`), not relative ("5 min pehle") | Manual smoke ("Home last-sync label" below) |
+| Settings screen | "Last sync" line uses absolute `displayDateTime` format, matching Home | Manual smoke ("Settings last-sync line matches Home format" below) |
+| Home projection | `pickLatest` ordering: `ORDER BY pe.date DESC, pe.updatedAt DESC` — newer date wins outright; on date tie, newer `updatedAt` wins | LatestEntryOrderingTest |
+| SyncRepository | `runFullSyncNow()` performs push → pull in that order, aborting before pull if push fails | Manual smoke ("Bidirectional sync via Home refresh" / "Push failure aborts before pull" below) |
 | SyncRepository | `runFullSyncNow()` writes lastSyncedAt on success, lastSyncError on failure | Manual smoke ("Sync now success/failure surfacing" below) |
 | SyncRepository | `runFullSyncNow()` returns `AppResult.Ok(SyncOutcome(0,0,0))` when nothing pending AND nothing pulled, still stamps lastSyncedAt | Manual smoke ("Sync now after empty mark" below) |
 | PullApplier | server changes apply atomically inside one Room transaction (items first, entries second, FK held) | Manual smoke ("First-install pull populates the local DB" below) |
@@ -143,6 +161,7 @@ surface.
 - [ ] **Add item** — code + name only saves; duplicate code is rejected with the Hinglish message
 - [ ] **Add item with first purchase** — filling price on the add-item screen creates both the item and the entry in one tap
 - [ ] **Edit item** — opening edit prefills code, name, unit from the existing row
+- [ ] **Unit dropdown** — Open Add-item, tap the unit field's trailing arrow → dropdown appears with all kirana units (Kg, Gram, Litre, ML, Adad, Packet, Dozen, Bori, Peti, Bundle, Patta, Crate). Pick one → the value fills the field and the dropdown closes. Now tap the field again and type "Tola" by hand → the custom value sticks (the dropdown does NOT slam shut while typing). Save the item and re-open Edit → the unit (whether picked or typed) round-trips. Long unit lists scroll inside the menu without pushing the form around.
 - [ ] **Rename item code preserves history** — edit an item with existing entries, change only the **code**, save → opening detail under the new code shows every previous purchase entry; the old code no longer appears in the home list
 - [ ] **Rename item code triggers re-sync** — after the rename, open Settings → pending count includes both the new item row and one row per repointed entry; running "Sync now" pushes them and the count returns to 0
 - [ ] **Rename onto a previously-deleted code** — soft-delete item `OLD`, then edit a different item and rename its code to `OLD` → the rename succeeds (it revives the row with the renamed item's name/unit) and the entries from the source item are visible under `OLD`
@@ -159,14 +178,16 @@ surface.
   - The Home row stays one line tall (no horizontal scroll, the trailing rate stays visible)
   - The Item Detail header card doesn't wrap into 4+ lines and the code chip ellipses
   - History rows stay one line tall — long suppliers / notes ellipsis instead of expanding the card
+- [ ] **Long timestamp doesn't break the home row** — using `adb shell sqlite3 databases/ratecard.db "UPDATE purchase_entries SET date='Tue May 05 2026 00:00:00 GMT+0530 (India Standard Time)' WHERE entryId='<some id>'"` (force a corrupted date string into a row), reopen the app and pull-to-refresh / scroll Home. The corresponding Home row MUST still show its code chip + item name on the left and a trailing date string of at most 15 chars on the right (e.g. "Tue May 05 2026"). The row stays one line tall and the trailing column never exceeds 140 dp regardless of input — verify by toggling the input to gibberish (`"qwertyuiopasdfghjkl"`) and the row layout remains identical.
 - [ ] **Edit entry** — opening edit prefills date, price, quantity, supplier, notes from the existing row
 - [ ] **Delete item** — confirm dialog appears; entry history is wiped on confirm
 - [ ] **Delete entry** — confirm dialog appears; entry disappears from item-detail history
 - [ ] **Search** — typing partial code or name (Hinglish or English) filters the list within ~300 ms
 - [ ] **Bidirectional sync via Home refresh** — On Phone A, add a new item, tap the Home top-right refresh button, watch for "Sync ho gaya — 1 rows upload" snackbar. On Phone B (same Sheet URL), tap refresh, watch for "Sync ho gaya — 1 nayi entries" snackbar and confirm the item now appears in the list. The "Last sync" timestamp under the search bar should update to "abhi abhi" / "1 minute pehle" on each phone. With both sides quiet, tapping refresh again on either phone should show "Sab kuch sync ho gaya — kuch naya nahi". When Phone A has unsynced edits AND new entries are waiting on the server, the snackbar should read "Sync ho gaya — N upload, M download".
 - [ ] **Home refresh button feedback** — tap the refresh button; the icon swaps to a 24 dp spinner in the same slot, the rest of the top app bar (logo + Settings gear) does NOT shift horizontally, and the button is un-tappable until the sync resolves. Double-tapping during a sync does NOT spawn a second sync.
-- [ ] **Home last-sync label** — on a fresh install (lastSyncedAt = 0) the line under the search bar reads "Abhi tak sync nahi hua". After the first successful sync it flips to "Last sync: abhi abhi"; navigate away for a few minutes and return — it now reads "Last sync: N minute pehle". The line is right-aligned, in `bodySmall` `onSurfaceVariant`, single line.
-- [ ] **Sync now** — tapping the Sync button pulls server changes first, then pushes any locally-pending rows. Rows that already synced are NOT re-pushed (the new pull/push flow only sends genuinely pending edits, in contrast to the old "mark-all-pending" force-resync behaviour).
+- [ ] **Home last-sync label** — on a fresh install (lastSyncedAt = 0) the line under the search bar reads "Abhi tak sync nahi hua". After the first successful sync it flips to an absolute timestamp like "Last sync: 5 May 2026 2:30 PM". The line stays put when you navigate away and come back (no relative drift; we deliberately do NOT poll a clock). The line is right-aligned, in `bodySmall` `onSurfaceVariant`, single line.
+- [ ] **Settings last-sync line matches Home format** — open Settings; the URL summary card and the "Details dekhein" dialog both show "Last sync: 5 May 2026 2:30 PM" in the same format Home uses (no locale-medium-date / short-time string from the system DateFormat). Pre-first-sync both surfaces fall back to "Abhi tak sync nahi hua".
+- [ ] **Sync now** — tapping the Sync button pushes any locally-pending rows FIRST, then pulls server changes. Rows that already synced are NOT re-pushed (only genuinely pending edits go up). On the second tap with nothing pending, the snackbar reads "kuch naya nahi" and `lastSyncedAt` still updates.
 - [ ] **Sync now success/failure surfacing** — with a working URL the snackbar shows the bidirectional outcome (combined / push-only / pull-only / nothing-new) and `lastSyncedAt` updates on Settings; with a deliberately wrong URL the snackbar shows "Sync nahi hua: …" and the same error appears in red under "Pichhli error: …" on Settings (no silent failure path)
 - [ ] **Sync now after empty mark** — tap "Sync now" twice in a row; the second tap should show the "kuch naya nahi" snackbar (zero pushed, zero pulled) and `lastSyncedAt` should still update — proving the success codepath fires even when both sides are quiet
 - [ ] **Pending count visible** — after editing an item, the Settings screen shows "N rows sync hone baaki hain"; after a successful sync it switches to "Sab kuch sync ho gaya hai"
@@ -223,7 +244,7 @@ any change to `SyncRepository`, `PullApplier`, or the Apps Script
   3. Re-enable network on B. Tap refresh on B.
   4. Expected: B's local "B-name" wins because B's `updatedAt` is strictly newer than A's (B edited last, regardless of which phone synced first). The pull skips A's older row, the push then sends "B-name" up. Verify on the sheet — final value is "B-name".
   5. Now on A, tap refresh again → A pulls "B-name" from the server. Both phones converge.
-- [ ] **Pull failure aborts before push** — On a phone with one pending local edit, deliberately break the URL (point at a 404). Tap refresh. The snackbar must show the failure. Verify in the sheet that the local pending edit was NOT pushed (we abort before push to avoid clobbering server state we couldn't read). Pending count stays > 0; restoring the URL and re-tapping refresh resolves both sides.
+- [ ] **Push failure aborts before pull** — On a phone with one pending local edit, deliberately break the URL (point at a 404). Tap refresh. The snackbar must show the failure. Verify the row was NOT pushed (sheet unchanged) AND no server-side changes landed on the phone — we abort the pull on push failure so the user never sees server state silently overwriting what they thought they'd saved. Pending count stays > 0; `lastSyncedAt` is NOT advanced; the red "Pichhli error" line is populated. Restoring the URL and re-tapping refresh sends the pending edit up first, then pulls fresh server changes — both sides converge.
 - [ ] **Switching sheet URL re-pulls everything** — Phone is fully synced against Sheet 1 (some non-zero `pullCursor` is stored). On Settings, change the Sheet URL to a different sheet (Sheet 2 with different items). Tap Home refresh. The snackbar should report a fresh full-pull from Sheet 2 (items + entries counts equal whatever Sheet 2 contains). The local DB now reflects Sheet 2; Sheet 1's items that aren't in Sheet 2 are NOT removed (they're orphan locally — a fresh install would have been cleaner, but the cursor reset alone is enough for the user-visible "I changed sheets and pull works" smoke).
 - [ ] **Cursor advances incrementally** — After a successful pull, immediately tap refresh again. The second pull should report `0 items + 0 entries` because the cursor advanced past everything. (If you see the same counts twice, the cursor isn't being persisted — bug in `SettingsRepository.setPullCursor` or the Apps Script's `pullChanges` cursor logic.)
 

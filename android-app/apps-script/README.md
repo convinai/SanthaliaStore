@@ -92,16 +92,28 @@ How it works:
 - Every time the server writes a row (upsert, bulk upsert, or soft-delete), it stamps a server-side timestamp into the `serverUpdatedAt` column. This column is **server-only**: phones never send it. Using the server's clock means the cursor works correctly even if two phones disagree on what time it is.
 - The phone calls action `pullChanges` with `{ "sinceCursor": "<last cursor it saw>" }`. The first time, the cursor is empty, which means "send me everything".
 - The script returns every `Items` row and every `PurchaseEntries` row whose `serverUpdatedAt` is strictly greater than the cursor, sorted ascending by `serverUpdatedAt`, plus a new `cursor` value the phone should use on the next call.
-- Soft-deleted rows (`deleted = TRUE`) are also included in the pull — the phone needs them to apply the delete locally; it filters them out from the UI itself.
 - Each call returns at most **1000 items + 1000 entries**. If you're catching up after a long offline period and there's more, the phone just polls again with the new cursor — no row is ever skipped.
 
 You don't have to do anything for this — it runs automatically. Just keep the same Web app URL in the phone.
+
+**Soft-deleted rows are NOT included in the `pullChanges` response.** Once a row is marked `deleted = TRUE` it stays in the sheet for record-keeping, but it's invisible to subsequent pulls. The cursor still advances past the soft-delete event so the server doesn't keep re-evaluating the same tombstone on every request.
+
+Tradeoff: a soft-delete on one phone does **not** propagate to other phones via pull. Each phone manages its own deletes locally — Phone A deleting an item won't make it disappear on Phone B. To bring a phone back in line with the server, use the app's **Settings → Sab data reset karein** action; it clears the local DB and re-pulls from the (now-cleaner) sheet.
+
+#### Manual smoke test
+
+After redeploying, verify the tombstone filter is working:
+
+1. Open the bound Google Sheet and pick any row in the `Items` tab. Set its `deleted` cell to `TRUE` and write a fresh ISO 8601 string (e.g. the current time) into its `serverUpdatedAt` cell so the cursor will treat it as new.
+2. On the phone, open **Settings → Sync** and tap **Sync now**.
+3. In the Apps Script editor, open **Executions** (left sidebar). Click the most recent `doPost` run and expand the response payload. The deleted row's `code` (or `entryId`) should **not** appear in `items[]` (or `entries[]`).
+4. Tap **Sync now** again. The next response should NOT include the same row either — the cursor advanced past it on the previous pull.
 
 ---
 
 ## Tests
 
-The folder ships with a small unit-test file (`Tests.gs`) that exercises the cell-value normalization helpers (`toIsoTimestamp_`, `toLocalDate_`, `parseBool_`). These are the helpers that previously caused a data-corruption bug where Google Sheets had silently converted ISO 8601 strings into `Date` objects, and `String(d)` then leaked a long locale string (e.g. `Tue May 05 2026 00:00:00 GMT+0530 (India Standard Time)`) onto the wire.
+The folder ships with a small unit-test file (`Tests.gs`) that exercises the cell-value normalization helpers (`toIsoTimestamp_`, `toLocalDate_`, `parseBool_`) and the pull-sync row collector (`collectChangedRows_`). The normalization tests guard against a previous data-corruption bug where Google Sheets had silently converted ISO 8601 strings into `Date` objects and `String(d)` then leaked a long locale string (e.g. `Tue May 05 2026 00:00:00 GMT+0530 (India Standard Time)`) onto the wire. The collector tests pin down the tombstone-filter / cursor-advance contract so a future refactor can't accidentally start sending deleted rows back to phones.
 
 To run the tests after pasting a new `Code.gs` / `Tests.gs`:
 
@@ -109,7 +121,7 @@ To run the tests after pasting a new `Code.gs` / `Tests.gs`:
 2. In the function dropdown at the top of the editor, select **`runAllTests_`**.
 3. Click **Run**.
 4. Open **View → Logs** (Cmd+Enter on Mac, Ctrl+Enter on Windows).
-5. Look for the line `PASS=N FAIL=M`. A clean run prints `PASS=5 FAIL=0`. Any failure logs the failing test name plus the assertion message just above the summary.
+5. Look for the line `PASS=N FAIL=M`. A clean run prints `PASS=8 FAIL=0`. Any failure logs the failing test name plus the assertion message just above the summary.
 
 The tests do not touch your live sheet — they only call pure helpers in memory — so they are safe to run on the production project at any time.
 
