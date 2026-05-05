@@ -1,6 +1,10 @@
 package `in`.santhaliastore.ratecard.ui.screens.settings
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,6 +24,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -47,6 +52,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
@@ -108,8 +114,14 @@ fun SettingsScreen(
     val snackSyncDonePulledOnlyFormat = stringResource(R.string.sync_done_pulled_only_format)
     val snackSyncDoneCombinedFormat = stringResource(R.string.sync_done_combined_format)
     val snackSyncFailedFormat = stringResource(R.string.sync_failed_format)
+    val snackResetDoneFormat = stringResource(R.string.settings_reset_done_format)
+    val snackResetFailedFormat = stringResource(R.string.settings_reset_failed_format)
 
-    // One-shot snackbar events from the VM (sync done / sync failed).
+    // One-shot snackbar events from the VM (sync done / sync failed /
+    // reset done / reset failed). Reset events go through the SAME
+    // snackbar host as sync so the user sees a consistent feedback
+    // affordance — the destructive nature of reset is conveyed by
+    // the confirm dialog, not by surfacing it elsewhere.
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
             val text = when (event) {
@@ -126,6 +138,11 @@ fun SettingsScreen(
                     }
                 }
                 is UiEvent.SyncFailure -> snackSyncFailedFormat.format(event.message)
+                is UiEvent.ResetSuccess -> snackResetDoneFormat.format(
+                    event.itemsApplied,
+                    event.entriesApplied
+                )
+                is UiEvent.ResetFailure -> snackResetFailedFormat.format(event.message)
             }
             snackbarHostState.showSnackbar(
                 message = text,
@@ -133,6 +150,12 @@ fun SettingsScreen(
             )
         }
     }
+
+    // Confirmation dialog state for the destructive reset action.
+    // Lives in the screen so the user dismissing it can't be racing a
+    // suspend launch — the VM only sees the "go" once the user has
+    // tapped confirm.
+    var showResetConfirm by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -335,6 +358,36 @@ fun SettingsScreen(
                 Text(stringResource(R.string.sync_view_details))
             }
 
+            // ----- Group 6: destructive recovery action -----
+            // Wipes the local DB and re-pulls from the sheet. Lives
+            // OUTSIDE the URL-collapse so the user can always reach it
+            // even when the editor is open (or even when there's no
+            // saved URL — though we disable it in that case because a
+            // pull with no URL would just no-op).
+            //
+            // The error-tinted outline is the visual cue that this is
+            // not a normal action. The caption underneath spells out
+            // exactly what happens, and the confirm dialog reiterates
+            // it once more — three layers of "are you sure" before
+            // any data is touched.
+            Spacer(Modifier.height(24.dp))
+            OutlinedButton(
+                onClick = { showResetConfirm = true },
+                enabled = urlSaved && !state.syncing && !state.resetting,
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(stringResource(R.string.settings_reset_button))
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = stringResource(R.string.settings_reset_caption),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
             Spacer(Modifier.height(24.dp))
 
             SectionTitle(stringResource(R.string.settings_section_lock))
@@ -431,6 +484,64 @@ fun SettingsScreen(
             pendingCount = state.pendingCount,
             onDismiss = { showSyncDetails = false }
         )
+    }
+
+    if (showResetConfirm) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirm = false },
+            title = { Text(stringResource(R.string.settings_reset_confirm_title)) },
+            text = { Text(stringResource(R.string.settings_reset_confirm_message)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showResetConfirm = false
+                        viewModel.resetLocalData()
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text(stringResource(R.string.settings_reset_confirm_action))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetConfirm = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
+    }
+
+    // Fullscreen blocking overlay while reset is in flight. We use a
+    // semi-transparent scrim with an indeterminate spinner so the user
+    // sees that something destructive is happening AND can't tap any
+    // background controls (a stray tap on Sync now mid-reset would
+    // race the post-reset pull). The clickable modifier swallows
+    // touches without doing anything — that's the point.
+    if (state.resetting) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.55f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = stringResource(R.string.settings_reset_in_progress),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White
+                )
+            }
+        }
     }
 }
 

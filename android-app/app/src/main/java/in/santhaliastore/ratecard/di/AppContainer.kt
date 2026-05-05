@@ -85,6 +85,7 @@ class AppContainer(private val context: Context) {
 
     val syncRepo: SyncRepository by lazy {
         SyncRepository(
+            database = database,
             itemRepo = itemRepo,
             purchaseRepo = purchaseRepo,
             settings = settingsRepo,

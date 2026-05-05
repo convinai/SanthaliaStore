@@ -75,4 +75,14 @@ class PurchaseRepository(
         dao.markAllPending()
         notifyChange()
     }
+
+    /**
+     * Wipe every purchase entry row. Destructive — only callable from
+     * the Settings → "Reset local data" recovery action, which wraps
+     * this and the matching item wipe in a single Room transaction so
+     * the FK on `itemCode -> items.code` is never violated mid-flight.
+     */
+    suspend fun deleteAll() {
+        dao.deleteAll()
+    }
 }

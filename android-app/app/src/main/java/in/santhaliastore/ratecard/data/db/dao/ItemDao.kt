@@ -50,6 +50,23 @@ interface ItemDao {
     @Query("UPDATE items SET pendingSync = 1")
     suspend fun markAllPending()
 
+    /**
+     * Wipe every row from the items table.
+     *
+     * Used by the destructive "Reset local data" recovery action in
+     * Settings — the user is acknowledging that the phone's view has
+     * drifted from the sheet's view (e.g. they manually cleared the
+     * sheet) and wants a clean re-pull. Room keeps `items_fts` in sync
+     * automatically because the FTS entity declares `contentEntity =
+     * ItemEntity::class`, so we don't need a separate FTS purge.
+     *
+     * Caller is responsible for clearing dependent rows BEFORE this
+     * runs (the FK on `purchase_entries.itemCode` is NO_ACTION, so
+     * dangling entries would otherwise stay alive but orphaned).
+     */
+    @Query("DELETE FROM items")
+    suspend fun deleteAll()
+
     /* ----------------------------- reads ------------------------------ */
 
     @Query("SELECT * FROM items WHERE code = :code LIMIT 1")

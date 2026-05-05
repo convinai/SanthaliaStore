@@ -56,6 +56,19 @@ interface PurchaseEntryDao {
     @Query("UPDATE purchase_entries SET pendingSync = 1")
     suspend fun markAllPending()
 
+    /**
+     * Wipe every row from the purchase_entries table.
+     *
+     * Used by the destructive "Reset local data" recovery action in
+     * Settings. Must run BEFORE [ItemDao.deleteAll] inside the same
+     * Room transaction so the FK on `itemCode -> items.code` is never
+     * left dangling (NO_ACTION onDelete means SQLite would otherwise
+     * permit orphan rows but they'd be invisible everywhere except a
+     * raw SELECT).
+     */
+    @Query("DELETE FROM purchase_entries")
+    suspend fun deleteAll()
+
     /* ----------------------------- reads ------------------------------ */
 
     @Query("SELECT * FROM purchase_entries WHERE entryId = :entryId LIMIT 1")

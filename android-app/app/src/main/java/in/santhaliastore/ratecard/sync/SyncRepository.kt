@@ -1,5 +1,7 @@
 package `in`.santhaliastore.ratecard.sync
 
+import androidx.room.withTransaction
+import `in`.santhaliastore.ratecard.data.db.AppDatabase
 import `in`.santhaliastore.ratecard.data.db.entity.ItemEntity
 import `in`.santhaliastore.ratecard.data.db.entity.PurchaseEntryEntity
 import `in`.santhaliastore.ratecard.data.prefs.SettingsRepository
@@ -26,6 +28,7 @@ import kotlinx.coroutines.flow.first
  * remote state we don't yet know about.
  */
 class SyncRepository(
+    private val database: AppDatabase,
     private val itemRepo: ItemRepository,
     private val purchaseRepo: PurchaseRepository,
     private val settings: SettingsRepository,
@@ -119,6 +122,78 @@ class SyncRepository(
                 pulledEntries = pullOutcome.entriesApplied
             )
         )
+    }
+
+    /**
+     * Destructive recovery path — wipes every local item / entry row,
+     * resets the pull cursor, then runs a full sync against the sheet.
+     *
+     * Use case: the user manually cleared rows on the sheet (or some
+     * other out-of-band edit) and expects the phone to mirror that.
+     * The incremental cursor on its own can't propagate "row vanished
+     * from the sheet without a tombstone" because the server only
+     * emits change rows it can see — bypassing it via a full reset is
+     * the only honest recovery.
+     *
+     * Behaviour:
+     *   1. Inside a single Room transaction, delete every entry row,
+     *      delete every item row, and clear the pull cursor.
+     *      Order matters: entries first, items second, so the FK on
+     *      `purchase_entries.itemCode -> items.code` is never violated
+     *      mid-transaction. `items_fts` cleans up automatically because
+     *      it's a contentEntity-backed FTS table.
+     *   2. After the transaction commits, run [runFullSyncNow]. This
+     *      is OUTSIDE the transaction because it does network I/O —
+     *      Room's `withTransaction` is suspend-aware but holding the
+     *      DB lock across an HTTP round-trip would block every other
+     *      DB write for the duration of the network call.
+     *   3. If the post-reset sync fails, the local DB stays cleared
+     *      and `lastSyncError` is populated by [runFullSyncNow] — the
+     *      user can retry by tapping refresh. We deliberately do not
+     *      "roll back" the wipe: the wipe is the user's intent, and
+     *      reverting it would just leave them in the same drift state
+     *      they invoked reset to escape.
+     *
+     * Crashes are NOT cleared — the on-disk crash queue lives in
+     * `<filesDir>/crashes.log` and rides its own retry path so any
+     * pending crash uploads still happen on the next sync.
+     */
+    suspend fun resetLocalAndPullFresh(): AppResult<SyncOutcome> {
+        // Step 1: nuke local state inside one transaction. We can't
+        // wrap appResultOf around `withTransaction` and the network
+        // call together because `runFullSyncNow` does its own error
+        // handling and surfaces errors through AppResult — running
+        // it inside an outer try/catch would double-stamp lastSyncError.
+        val wipeResult: AppResult<Unit> = appResultOf {
+            database.withTransaction {
+                // Entries first — the FK target (items) must outlive
+                // its dependents inside the transaction window.
+                purchaseRepo.deleteAll()
+                itemRepo.deleteAll()
+                // Empty cursor → server returns the full dataset on
+                // the next pull. Inside the transaction so a crash
+                // between the wipe and the cursor reset doesn't leave
+                // us in a state where the cursor would skip rows.
+                settings.setPullCursor("")
+            }
+            // Wipe also clears any stale "last sync error" — the user
+            // is starting fresh and shouldn't see an old error string
+            // alongside a brand-new sync result.
+            settings.setLastSyncError(null)
+        }
+        if (wipeResult is AppResult.Err) {
+            // Local wipe failed (rare — IO error inside Room). Surface
+            // the error and stop; running the sync against a half-wiped
+            // DB would just produce a confusing partial state.
+            settings.setLastSyncError(wipeResult.message)
+            return wipeResult
+        }
+
+        // Step 2: full sync. With the cursor empty and the local DB
+        // empty, this becomes a one-shot bootstrap pull (server sends
+        // the entire dataset) followed by a no-op push (we have no
+        // pending rows because we just deleted them all).
+        return runFullSyncNow()
     }
 
     /**

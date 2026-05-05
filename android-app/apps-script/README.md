@@ -99,6 +99,22 @@ You don't have to do anything for this — it runs automatically. Just keep the 
 
 ---
 
+## Tests
+
+The folder ships with a small unit-test file (`Tests.gs`) that exercises the cell-value normalization helpers (`toIsoTimestamp_`, `toLocalDate_`, `parseBool_`). These are the helpers that previously caused a data-corruption bug where Google Sheets had silently converted ISO 8601 strings into `Date` objects, and `String(d)` then leaked a long locale string (e.g. `Tue May 05 2026 00:00:00 GMT+0530 (India Standard Time)`) onto the wire.
+
+To run the tests after pasting a new `Code.gs` / `Tests.gs`:
+
+1. Open the Apps Script editor for this project.
+2. In the function dropdown at the top of the editor, select **`runAllTests_`**.
+3. Click **Run**.
+4. Open **View → Logs** (Cmd+Enter on Mac, Ctrl+Enter on Windows).
+5. Look for the line `PASS=N FAIL=M`. A clean run prints `PASS=5 FAIL=0`. Any failure logs the failing test name plus the assertion message just above the summary.
+
+The tests do not touch your live sheet — they only call pure helpers in memory — so they are safe to run on the production project at any time.
+
+---
+
 ## Troubleshooting
 
 **1. "Authorization required" / sync fails with HTML response**

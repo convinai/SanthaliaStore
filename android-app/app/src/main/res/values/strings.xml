@@ -102,6 +102,16 @@
     <string name="sync_view_details">Details dekhein</string>
     <string name="sync_details_title">Sync details</string>
 
+    <!-- Destructive recovery: wipe local DB and full re-pull from sheet -->
+    <string name="settings_reset_button">Sab data reset karein</string>
+    <string name="settings_reset_caption">Phone se saara data hat jaayega aur sheet se fresh data load hoga. Sirf jab sheet aur phone match nahi kar rahe.</string>
+    <string name="settings_reset_confirm_title">Pakka reset karein?</string>
+    <string name="settings_reset_confirm_message">Phone ka saara data delete ho jaayega aur sheet se fresh load hoga. Yeh wapas nahi aayega.</string>
+    <string name="settings_reset_confirm_action">Reset karein</string>
+    <string name="settings_reset_done_format">Reset ho gaya — %1$d items, %2$d entries fresh load</string>
+    <string name="settings_reset_failed_format">Reset nahi hua: %1$s</string>
+    <string name="settings_reset_in_progress">Reset ho raha hai…</string>
+
     <!-- Home — refresh + last-sync status line -->
     <string name="home_refresh_cd">Refresh karein</string>
     <string name="home_last_sync_format">Last sync: %1$s</string>

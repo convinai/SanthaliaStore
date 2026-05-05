@@ -91,21 +91,30 @@ class PullApplier(
 
         return PullOutcome(itemsApplied = itemsApplied, entriesApplied = entriesApplied)
     }
+}
 
-    /**
-     * Last-writer-wins on `updatedAt`. Strings compare correctly because
-     * we use a fixed-width ISO 8601 format with `Z` suffix everywhere
-     * (see [in.santhaliastore.ratecard.util.Time]).
-     */
-    private fun shouldApplyItem(existing: ItemEntity?, pulled: PulledItem): Boolean {
-        if (existing == null) return true
-        return pulled.updatedAt >= existing.updatedAt
-    }
+/**
+ * Last-writer-wins on `updatedAt`. Lives at the package top level so
+ * JVM unit tests can drive the conflict matrix without standing up
+ * Room or constructing [PullApplier].
+ *
+ * Strings compare correctly because we use a fixed-width ISO 8601
+ * format with `Z` suffix everywhere (see
+ * [in.santhaliastore.ratecard.util.Time]).
+ *
+ * Tie behaviour (`pulled.updatedAt == existing.updatedAt`): the pulled
+ * row wins. The alternative — local wins on tie — would silently
+ * suppress server-emitted soft-deletes in the rare case the server
+ * timestamp matches the local one to the millisecond.
+ */
+internal fun shouldApplyItem(existing: ItemEntity?, pulled: PulledItem): Boolean {
+    if (existing == null) return true
+    return pulled.updatedAt >= existing.updatedAt
+}
 
-    private fun shouldApplyEntry(existing: PurchaseEntryEntity?, pulled: PulledEntry): Boolean {
-        if (existing == null) return true
-        return pulled.updatedAt >= existing.updatedAt
-    }
+internal fun shouldApplyEntry(existing: PurchaseEntryEntity?, pulled: PulledEntry): Boolean {
+    if (existing == null) return true
+    return pulled.updatedAt >= existing.updatedAt
 }
 
 /**

@@ -155,6 +155,17 @@ class ItemRepository(
         notifyChange()
     }
 
+    /**
+     * Wipe every item row. Destructive — only callable from the
+     * Settings → "Reset local data" recovery action, where it runs
+     * inside a Room transaction owned by [SyncRepository] alongside
+     * the matching entries wipe. Direct callers from feature code
+     * would bypass that transaction and risk a half-cleared DB.
+     */
+    suspend fun deleteAll() {
+        dao.deleteAll()
+    }
+
     companion object {
         // Page size tuned for low-end devices: we want enough rows to
         // fill the viewport on cheap 5" phones (~9 rows visible) but

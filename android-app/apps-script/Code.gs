@@ -77,6 +77,18 @@ const PULL_LIMIT = 1000;
 // phones are possible). 30s is long enough to ride out a normal sync.
 const LOCK_TIMEOUT_MS = 30 * 1000;
 
+// Belt-and-suspenders against Google Sheets' silent string-to-Date
+// auto-conversion. For the columns whose values must round-trip as
+// strings (ISO 8601 timestamps, `YYYY-MM-DD` purchase dates), we set
+// the cell number format to plain text (`@`) on first load. New writes
+// land in `@`-formatted cells and stay strings; existing cells that
+// already auto-converted to Date stay as Date in storage but are
+// normalized on read by toIsoTimestamp_ / toLocalDate_.
+const TEXT_FORMAT_COLS = {
+  Items:           ['updatedAt', 'serverUpdatedAt'],
+  PurchaseEntries: ['date', 'updatedAt', 'serverUpdatedAt']
+};
+
 
 /* =========================================================================
  *  ENTRY POINTS
@@ -509,8 +521,11 @@ function upsertItemInMemory_(ctx, payload, index) {
     } else {
       // Compare updatedAt — keep the newer one. Equal timestamps still write
       // (so a re-send with deleted=FALSE will resurrect a soft-deleted row).
+      // toIsoTimestamp_ defends against Sheets having auto-converted the
+      // stored ISO string into a Date object (which would otherwise lex-
+      // compare as a locale string and silently break this branch).
       const stored = ctx.values[existingRow];
-      const storedUpdatedAt = String(stored[ctx.colIndex.updatedAt] || '');
+      const storedUpdatedAt = toIsoTimestamp_(stored[ctx.colIndex.updatedAt]);
       if (updatedAt >= storedUpdatedAt) {
         ctx.values[existingRow] = newRow;
         ctx.dirty = true;
@@ -569,7 +584,8 @@ function upsertEntryInMemory_(ctx, payload, index) {
       ctx.dirty = true;
     } else {
       const stored = ctx.values[existingRow];
-      const storedUpdatedAt = String(stored[ctx.colIndex.updatedAt] || '');
+      // See note in upsertItemInMemory_: stored cell may be a Date.
+      const storedUpdatedAt = toIsoTimestamp_(stored[ctx.colIndex.updatedAt]);
       if (updatedAt >= storedUpdatedAt) {
         ctx.values[existingRow] = newRow;
         ctx.dirty = true;
@@ -620,7 +636,8 @@ function softDeleteInMemory_(ctx, keyName, payload, index) {
       ctx.dirty = true;
     } else {
       const stored = ctx.values[existingRow];
-      const storedUpdatedAt = String(stored[ctx.colIndex.updatedAt] || '');
+      // See note in upsertItemInMemory_: stored cell may be a Date.
+      const storedUpdatedAt = toIsoTimestamp_(stored[ctx.colIndex.updatedAt]);
       if (updatedAt >= storedUpdatedAt) {
         stored[ctx.colIndex.deleted]         = 'TRUE';
         stored[ctx.colIndex.updatedAt]       = updatedAt;
@@ -788,8 +805,11 @@ function loadSheetContext_(sheetName, expectedHeaders) {
       while (all[r].length < expectedHeaders.length) all[r].push('');
       newColumns.forEach(function (c) {
         if (c.name === 'serverUpdatedAt') {
+          // toIsoTimestamp_ in case Sheets converted the legacy
+          // `updatedAt` cell into a Date — backfilling the locale
+          // string into serverUpdatedAt would poison the cursor.
           const existingUpdatedAt = (updatedAtIdx >= 0)
-            ? String(all[r][updatedAtIdx] || '')
+            ? toIsoTimestamp_(all[r][updatedAtIdx])
             : '';
           all[r][c.index] = existingUpdatedAt || nowIso_();
         } else {
@@ -834,6 +854,25 @@ function loadSheetContext_(sheetName, expectedHeaders) {
   const colIndex = {};
   for (let i = 0; i < headers.length; i++) colIndex[headers[i]] = i;
 
+  // Force plain-text (`@`) number format on the columns whose values
+  // must round-trip as strings. This stops Sheets from auto-converting
+  // ISO 8601 / YYYY-MM-DD strings into Date objects on subsequent
+  // reads. It's a one-shot per-session call and idempotent — re-applying
+  // `@` to an already-`@`-formatted column is a no-op as far as the
+  // sheet is concerned. Existing rows whose cells already got auto-
+  // converted to Date stay as Date in the cell; the read-side helpers
+  // (toIsoTimestamp_ / toLocalDate_) handle that case.
+  const textFormatCols = TEXT_FORMAT_COLS[sheetName];
+  if (textFormatCols) {
+    const dataRowCount = Math.max(sheet.getMaxRows() - 1, 1);
+    textFormatCols.forEach(function (name) {
+      const idx = headers.indexOf(name);
+      if (idx >= 0) {
+        sheet.getRange(2, idx + 1, dataRowCount, 1).setNumberFormat('@');
+      }
+    });
+  }
+
   // Data rows (everything below the header).
   const values = [];
   for (let r = 1; r < all.length; r++) {
@@ -844,10 +883,15 @@ function loadSheetContext_(sheetName, expectedHeaders) {
   }
 
   // Build key -> rowIndex map. Key column is always the FIRST header.
+  // toPlainText_ defends against the (rare) case where a user typed a
+  // date-shaped value as a code/entryId and Sheets auto-converted it
+  // to a Date — without this, `String(dateObj)` would be the locale
+  // string and the keyMap entry would never line up with the same key
+  // sent by the phone.
   const keyCol = colIndex[headers[0]];
   const keyMap = new Map();
   for (let r = 0; r < values.length; r++) {
-    const k = String(values[r][keyCol] || '');
+    const k = toPlainText_(values[r][keyCol]);
     if (k) keyMap.set(k, r);
   }
 
@@ -981,7 +1025,12 @@ function collectChangedRows_(ctx, expectedHeaders, cursor, limit, toDto) {
 
   for (let r = 0; r < ctx.values.length; r++) {
     const row = ctx.values[r];
-    const sUpdated = String(row[sIdx] || '');
+    // toIsoTimestamp_ here (not String(... || '')) so that if the cell
+    // came back as a Date object, the lex-compare against the cursor
+    // (which is an ISO string) is apples-to-apples. Without this the
+    // cursor compare silently breaks the moment Sheets auto-converts
+    // a serverUpdatedAt cell to a Date.
+    const sUpdated = toIsoTimestamp_(row[sIdx]);
     // Empty serverUpdatedAt should not happen post-migration, but if
     // it does we treat it as "older than any cursor" so the client
     // doesn't get an undefined-shaped row.
@@ -992,8 +1041,8 @@ function collectChangedRows_(ctx, expectedHeaders, cursor, limit, toDto) {
 
   // Ascending by serverUpdatedAt, ties stable.
   out.sort(function (a, b) {
-    const av = String(a[sIdx] || '');
-    const bv = String(b[sIdx] || '');
+    const av = toIsoTimestamp_(a[sIdx]);
+    const bv = toIsoTimestamp_(b[sIdx]);
     if (av < bv) return -1;
     if (av > bv) return 1;
     return 0;
@@ -1007,12 +1056,12 @@ function collectChangedRows_(ctx, expectedHeaders, cursor, limit, toDto) {
 /** Sheet row → Items DTO sent to the client. */
 function rowToItemDto_(row, colIndex) {
   return {
-    code:            String(row[colIndex.code] || ''),
-    name:            String(row[colIndex.name] || ''),
-    unit:            String(row[colIndex.unit] || ''),
-    updatedAt:       String(row[colIndex.updatedAt] || ''),
+    code:            toPlainText_(row[colIndex.code]),
+    name:            toPlainText_(row[colIndex.name]),
+    unit:            toPlainText_(row[colIndex.unit]),
+    updatedAt:       toIsoTimestamp_(row[colIndex.updatedAt]),
     deleted:         parseBool_(row[colIndex.deleted]),
-    serverUpdatedAt: String(row[colIndex.serverUpdatedAt] || '')
+    serverUpdatedAt: toIsoTimestamp_(row[colIndex.serverUpdatedAt])
   };
 }
 
@@ -1029,17 +1078,74 @@ function rowToEntryDto_(row, colIndex) {
     : Number(rawPrice);
 
   return {
-    entryId:         String(row[colIndex.entryId] || ''),
-    itemCode:        String(row[colIndex.itemCode] || ''),
-    date:            String(row[colIndex.date] || ''),
+    entryId:         toPlainText_(row[colIndex.entryId]),
+    itemCode:        toPlainText_(row[colIndex.itemCode]),
+    date:            toLocalDate_(row[colIndex.date]),
     pricePerUnit:    pricePerUnit,
     quantity:        (quantity === null || isNaN(quantity)) ? null : quantity,
-    supplier:        String(row[colIndex.supplier] || ''),
-    notes:           String(row[colIndex.notes] || ''),
-    updatedAt:       String(row[colIndex.updatedAt] || ''),
+    supplier:        toPlainText_(row[colIndex.supplier]),
+    notes:           toPlainText_(row[colIndex.notes]),
+    updatedAt:       toIsoTimestamp_(row[colIndex.updatedAt]),
     deleted:         parseBool_(row[colIndex.deleted]),
-    serverUpdatedAt: String(row[colIndex.serverUpdatedAt] || '')
+    serverUpdatedAt: toIsoTimestamp_(row[colIndex.serverUpdatedAt])
   };
+}
+
+/* =========================================================================
+ *  CELL VALUE NORMALIZATION
+ *
+ *  Google Sheets silently coerces strings that look like dates (ISO 8601
+ *  timestamps, `YYYY-MM-DD`, even partial forms like `5 Jan`) into native
+ *  Date objects when stored in a cell. `getValues()` then returns those
+ *  cells as `Date` instances, and `String(d)` calls Date.prototype.toString
+ *  which yields a locale-formatted string like:
+ *    "Tue May 05 2026 00:00:00 GMT+0530 (India Standard Time)"
+ *
+ *  The Android client expects either ISO 8601 (for `updatedAt` /
+ *  `serverUpdatedAt`) or `YYYY-MM-DD` (for purchase `date`), so we must
+ *  normalize before serializing the row to JSON. These helpers are the
+ *  single choke point for that conversion.
+ * ========================================================================= */
+
+/**
+ * Normalize a cell that should round-trip as an ISO 8601 timestamp
+ * (`updatedAt`, `serverUpdatedAt`). For Date objects we emit
+ * `YYYY-MM-DDTHH:mm:ss.sssZ` via `Date.toISOString()`; everything else
+ * is stringified and trimmed. Empty / null / undefined → `''`.
+ */
+function toIsoTimestamp_(v) {
+  if (v instanceof Date) return v.toISOString();
+  return String(v || '').trim();
+}
+
+/**
+ * Normalize a cell that should round-trip as a `YYYY-MM-DD` local date
+ * (the `date` column on PurchaseEntries). For Date objects we read the
+ * sheet-local Y/M/D directly — converting to UTC and slicing risks a
+ * one-day shift in IST when the cell is midnight local. Strings pass
+ * through trimmed.
+ */
+function toLocalDate_(v) {
+  if (v instanceof Date) {
+    const yyyy = v.getFullYear();
+    const mm   = String(v.getMonth() + 1).padStart(2, '0');
+    const dd   = String(v.getDate()).padStart(2, '0');
+    return yyyy + '-' + mm + '-' + dd;
+  }
+  return String(v || '').trim();
+}
+
+/**
+ * Normalize a cell that is conceptually free-text (item `name`, `code`,
+ * `unit`, `supplier`, `notes`, etc). Defensive: even non-date columns
+ * can come back as a Date if the user typed something date-like as the
+ * value (e.g. "5 Jan" → Sheets converts to a Date). For that case we
+ * fall back to the ISO form so at least the value is not the long
+ * locale string. Strings pass through.
+ */
+function toPlainText_(v) {
+  if (v instanceof Date) return v.toISOString();
+  return String(v || '');
 }
 
 /**

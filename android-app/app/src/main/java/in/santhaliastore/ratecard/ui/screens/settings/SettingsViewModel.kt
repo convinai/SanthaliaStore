@@ -36,6 +36,7 @@ class SettingsViewModel(
         val testingConnection: Boolean = false,
         val testResult: TestResult? = null,
         val syncing: Boolean = false,
+        val resetting: Boolean = false,
         val pendingCount: Int = 0
     )
 
@@ -47,6 +48,15 @@ class SettingsViewModel(
     private val _testing = MutableStateFlow(false)
     private val _testResult = MutableStateFlow<TestResult?>(null)
     private val _syncing = MutableStateFlow(false)
+    /**
+     * Drives the fullscreen blocking spinner shown over the Settings
+     * screen while the destructive "Reset local data" action is in
+     * flight. Independent from [_syncing] because reset includes both
+     * a local wipe and a full pull, and we want a stronger UI gate
+     * (the user just confirmed a destructive action — they shouldn't
+     * be able to tap anything else until the recovery resolves).
+     */
+    private val _resetting = MutableStateFlow(false)
 
     private val pendingCountFlow = combine(
         itemRepo.observePendingCount(),
@@ -74,6 +84,29 @@ class SettingsViewModel(
             val pulledEntries: Int
         ) : UiEvent
         data class SyncFailure(val message: String) : UiEvent
+
+        /**
+         * The destructive "Reset local data" action completed cleanly —
+         * the local DB was wiped AND the post-reset full pull
+         * succeeded, applying the carried counts.
+         */
+        data class ResetSuccess(
+            val itemsApplied: Int,
+            val entriesApplied: Int
+        ) : UiEvent
+
+        /**
+         * Reset failed. Could mean either:
+         *   - the local wipe itself blew up (rare — IO error in Room), or
+         *   - the wipe succeeded but the subsequent pull failed (more
+         *     likely — bad network, bad URL).
+         *
+         * In the second case the local DB is left empty and
+         * `lastSyncError` carries the same message; the user can retry
+         * by tapping Sync now without re-confirming the destructive
+         * dialog.
+         */
+        data class ResetFailure(val message: String) : UiEvent
     }
 
     val state: StateFlow<Snapshot> = combine(
@@ -81,9 +114,9 @@ class SettingsViewModel(
         settingsRepo.pinEnabled,
         settingsRepo.lastSyncedAt,
         settingsRepo.lastSyncError,
-        combine(_testing, _testResult, _syncing, pendingCountFlow) {
-                testing, testRes, syncing, pending ->
-            Quad(testing, testRes, syncing, pending)
+        combine(_testing, _testResult, _syncing, _resetting, pendingCountFlow) {
+                testing, testRes, syncing, resetting, pending ->
+            Quint(testing, testRes, syncing, resetting, pending)
         }
     ) { url, pin, last, err, q ->
         Snapshot(
@@ -94,14 +127,16 @@ class SettingsViewModel(
             testingConnection = q.testing,
             testResult = q.testRes,
             syncing = q.syncing,
+            resetting = q.resetting,
             pendingCount = q.pending
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, Snapshot())
 
-    private data class Quad(
+    private data class Quint(
         val testing: Boolean,
         val testRes: TestResult?,
         val syncing: Boolean,
+        val resetting: Boolean,
         val pending: Int
     )
 
@@ -142,6 +177,44 @@ class SettingsViewModel(
                     pulledEntries = result.value.pulledEntries
                 )
                 is AppResult.Err -> UiEvent.SyncFailure(result.message)
+            }
+            _events.trySend(event)
+        }
+    }
+
+    /**
+     * Destructive recovery — wipe every local item / entry and pull
+     * the entire dataset back from the sheet. Confirmed by the user
+     * via the dialog in [SettingsScreen]; this method assumes consent
+     * and runs immediately.
+     *
+     * Surfaces the outcome via the snackbar channel:
+     *   - Success → [UiEvent.ResetSuccess] carrying the freshly-pulled
+     *               item / entry counts so the snackbar can confirm
+     *               "Reset ho gaya — N items, M entries fresh load".
+     *   - Failure → [UiEvent.ResetFailure] with the error message.
+     *               Note: even on failure the local DB is left wiped
+     *               (per [SyncRepository.resetLocalAndPullFresh]'s
+     *               documented contract) — the user can tap Sync now
+     *               to retry without re-confirming the dialog.
+     *
+     * Re-entrancy: a tap while already resetting is ignored — the
+     * dialog's confirm button is one-shot but a stuck network plus a
+     * fast double-tap could otherwise queue two resets, the second of
+     * which would race the first's pull.
+     */
+    fun resetLocalData() {
+        if (_resetting.value) return
+        _resetting.value = true
+        viewModelScope.launch {
+            val result = syncRepo.resetLocalAndPullFresh()
+            _resetting.value = false
+            val event = when (result) {
+                is AppResult.Ok -> UiEvent.ResetSuccess(
+                    itemsApplied = result.value.pulledItems,
+                    entriesApplied = result.value.pulledEntries
+                )
+                is AppResult.Err -> UiEvent.ResetFailure(result.message)
             }
             _events.trySend(event)
         }

@@ -31,6 +31,7 @@ app/src/test/java/in/santhaliastore/ratecard/
 └── sync/
     ├── SyncDtosTest.kt      # Moshi round-trip for every push action
     ├── PullDtosTest.kt      # Moshi round-trip for the bidirectional pullChanges action
+    ├── PullApplierConflictTest.kt # Last-writer-wins matrix for soft-delete propagation
     ├── CrashEventTest.kt    # Crash payload field names + JSON shape
     └── AppsScriptApiTest.kt # Retrofit interface installs cleanly + envelope() shape
 ```
@@ -106,6 +107,13 @@ adding new behaviour.
 | PullApplier | server changes apply atomically inside one Room transaction (items first, entries second, FK held) | Manual smoke ("First-install pull populates the local DB" below) |
 | PullApplier | last-writer-wins on `updatedAt` — pulled row newer than local overwrites and clears `pendingSync`; pulled row older skips | Manual smoke ("Conflict resolution: local edit wins / server edit wins" below) |
 | PullApplier | pulled `deleted = true` row writes a tombstone locally so the row disappears from the UI | Manual smoke ("Bidirectional sync via Home refresh" — soft-delete propagation step) |
+| PullApplier (predicate) | tombstone propagates when `pulled.updatedAt > existing.updatedAt` (live local row gets soft-deleted) | PullApplierConflictTest |
+| PullApplier (predicate) | tombstone is skipped when `pulled.updatedAt < existing.updatedAt` (newer local edit wins, push will resolve) | PullApplierConflictTest |
+| PullApplier (predicate) | un-delete propagates when a newer pulled live row arrives over a local tombstone | PullApplierConflictTest |
+| PullApplier (predicate) | equal timestamps with differing `deleted` flag — pulled wins (`>=`, not `>`) | PullApplierConflictTest |
+| PullApplier (predicate) | first-pull (no existing local row) always applies the pulled row | PullApplierConflictTest |
+| SyncRepository | `resetLocalAndPullFresh()` wipes items + entries inside one Room transaction, resets `pullCursor`, then runs a full pull-then-push | Manual smoke ("Reset local data via Settings" below) |
+| SyncRepository | `resetLocalAndPullFresh()` leaves the local DB cleared (no rollback) when the post-wipe pull fails — `lastSyncError` is populated and the user can retry via Sync now | Manual smoke ("Reset local data — pull failure path" below) |
 | Pull cursor | `setSheetUrl` resets `pullCursor` to empty so a phone repointed at a new sheet pulls a full dataset | Manual smoke ("Switching sheet URL re-pulls everything" below) |
 | No background sync | nothing is enqueued via WorkManager any more — `notifyChange` is a no-op and SyncWorker no longer exists | Manual smoke ("No auto sync after item add" below) |
 | Home screen | Top-bar refresh button runs the same pull-then-push sync as Settings | Manual smoke ("Bidirectional sync via Home refresh" below) |
@@ -165,6 +173,26 @@ surface.
 - [ ] **View details affordance** — tapping "Details dekhein" on Settings shows the human-formatted last-sync timestamp, pending count, and (if any) the verbatim last error in a wrap-friendly dialog
 - [ ] **No auto sync after item add** — add a single item with the URL configured → wait 5+ minutes WITHOUT tapping any sync button. The pending count must stay at 1; `lastSyncedAt` must NOT update; the row must NOT appear in the sheet. (We dropped background sync to save battery — the user controls every push.) The instant the user taps Home refresh or Settings → "Sync now", the row goes through.
 - [ ] **Bad URL surfaces in Settings** — set the URL to something that 404s, tap "Sync now" → the snackbar shows the failure, the red "Pichhli error" line is populated, and `lastSyncedAt` stays unchanged. The error stays put until the next successful sync (no background retries any more — fix the URL and tap "Sync now" again).
+- [ ] **Reset local data via Settings** — with a non-empty local DB and a working URL, scroll to the bottom of the Sync settings group → tap "Sab data reset karein". The destructive confirm dialog appears with the title "Pakka reset karein?" and the destructive action labelled "Reset karein" in red. Tap Reset karein → a fullscreen scrim with an indeterminate spinner blocks the screen for the duration. On success, the snackbar reads "Reset ho gaya — N items, M entries fresh load" with non-zero counts pulled from the sheet; the local DB now mirrors the sheet exactly. Verify via `adb shell run-as in.santhaliastore.ratecard.debug sqlite3 databases/ratecard.db "SELECT COUNT(*) FROM items"` matches the sheet's active row count. The pending count drops to 0.
+- [ ] **Reset local data — pull failure path** — Set the URL to a deliberately broken endpoint, then tap "Sab data reset karein" → confirm. The local wipe still runs (Home now shows the empty state), but the snackbar reads "Reset nahi hua: <error>" and the red "Pichhli error" line on Settings carries the same message. Fix the URL and tap "Sync now" — a clean full pull populates the DB without re-confirming the destructive dialog.
+- [ ] **Reset local data — destructive button gating** — when the URL field is empty, the "Sab data reset karein" button is disabled (a reset against no URL would just no-op). When a sync is in flight, the button is disabled. When a reset is in flight, every other tappable control on the screen is occluded by the scrim and ignored.
+- [ ] **Manual sheet clear → reset propagates** — On the sheet, manually delete every row from `Items` and `PurchaseEntries` (no `deleted=TRUE` tombstone, just remove). On the phone, tap Home refresh → nothing changes (by design — incremental pull only sees explicit changes). Now go to Settings → tap Sab data reset karein → confirm. The phone empties; the snackbar reports 0 items / 0 entries pulled (sheet is empty). The recovery path is the only honest fix for "manually-cleared sheet did not propagate".
+
+### Soft-delete cross-device propagation
+
+These exercise scenario 2d in the soft-delete audit. Run after any
+change to `PullApplier`, the soft-delete DAO queries, or the home
+queries' `deleted = 0` filter. Two phones (A and B) on the same
+Sheet URL, both pre-populated with the relevant items.
+
+- [ ] **Item soft-delete cascades to other devices** — On Phone A, item X has N entries. Tap delete on the item → confirm. Sync on A. Sync on B. Expected: X disappears from B's home (the home query filters `WHERE i.deleted = 0`). The N entries are NOT individually tombstoned — they remain alive locally with `itemCode = X`, but they are invisible because no list surfaces orphaned entries. If you navigate to a stale Item Detail bookmark for X on B, you should see the "Yeh item ab nahi raha" empty state.
+- [ ] **Single entry soft-delete propagates** — On Phone A, item X has 3 entries (e1, e2, e3). Soft-delete e2. Sync on A. Sync on B. Expected: B's item-detail history for X shows e1 and e3 only; e2 is gone. The `latestForItem` and `pagedItemsWithLastEntry` queries should pick the next-most-recent live entry for the home row's last-rate display.
+- [ ] **Atomic rename across two phones** — On Phone A, rename item X → Y (only the code changes). Sync on A. Sync on B. Expected: B's home now shows the item under code Y with all of X's purchase history visible; X is gone from the home list. The sequence on B's pull is items first (Y is created, X is tombstoned), then entries (their `itemCode` was already updated to Y by Phone A's atomic rename, so the FK is satisfied). If Phone B's local list still shows X for a beat, it's a pull-application bug — file it.
+- [ ] **Delete-then-recreate same code** — On Phone A, soft-delete item X. Sync on A. Then on A, create a brand new item with code X (different name). Sync on A. The sheet should now have an X tombstone (older `serverUpdatedAt`) AND a live X (newer `serverUpdatedAt`) — the bulkSync `REPLACE on conflict` semantics overwrite the tombstone with the live row. On Phone B, sync. B sees the live X with the new name; the prior history is NOT attached (entries were never moved — they belong to the dead row).
+- [ ] **Conflict — delete vs edit** — On Phone A (offline), soft-delete item X. On Phone B, edit X's name. Both come online. Whichever syncs second produces the final state by `updatedAt`. If B's edit timestamp is strictly newer than A's delete, the delete is undone server-side (B's live row replaces A's tombstone). This is last-writer-wins policy — document, do NOT special-case `deleted=true` to always win, that would silently destroy live local edits.
+
+### Other smokes
+
 - [ ] **Sync indicator** — pending icon flips to green check after successful sync; error state on a bad URL
 - [ ] **Connection test** — Settings → Test connection shows green when the URL is good, red on a 404 / mismatched script
 - [ ] **PIN lock** — enabling and entering a PIN gates the next cold start; disabling clears it
