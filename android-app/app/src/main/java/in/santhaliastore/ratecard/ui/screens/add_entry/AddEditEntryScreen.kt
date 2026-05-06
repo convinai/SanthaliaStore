@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -12,7 +13,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CalendarMonth
-import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -103,6 +103,14 @@ fun AddEditEntryScreen(
                         )
                     }
                 },
+                actions = {
+                    TextButton(
+                        onClick = { viewModel.save(date, price, quantity, supplier, notes) },
+                        enabled = !state.isSaving && !state.isLoading
+                    ) {
+                        Text(stringResource(R.string.action_save))
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background
                 )
@@ -115,6 +123,7 @@ fun AddEditEntryScreen(
                 .padding(padding)
                 .padding(horizontal = 16.dp, vertical = 8.dp)
                 .verticalScroll(rememberScrollState())
+                .imePadding()
         ) {
             // Date — read-only field that opens a DatePickerDialog
             OutlinedTextField(
@@ -204,19 +213,7 @@ fun AddEditEntryScreen(
                 maxLines = 3
             )
 
-            Spacer(Modifier.height(32.dp))
-
-            Button(
-                onClick = { viewModel.save(date, price, quantity, supplier, notes) },
-                enabled = !state.isSaving && !state.isLoading,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(54.dp)
-            ) {
-                Text(stringResource(R.string.action_save))
-            }
-
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(16.dp))
         }
     }
 

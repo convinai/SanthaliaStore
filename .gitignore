@@ -35,3 +35,6 @@ node_modules/
 # CI artifact downloads
 santhalia-rate-card-debug-apk-*.zip
 *.apk.zip
+
+# Stray PDFs dropped into the working tree
+*.pdf
