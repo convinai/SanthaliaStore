@@ -16,8 +16,8 @@ android {
         // Bumped from 1 / "1.0.0" to invalidate launcher icon caches on
         // MIUI / One UI / themed-icon launchers that key the cached icon
         // by package + versionCode + signature.
-        versionCode = 6
-        versionName = "1.0.5"
+        versionCode = 7
+        versionName = "1.0.6"
 
         // Vector drawables — supportLibrary lets older devices render them too.
         vectorDrawables {
@@ -149,6 +149,11 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    // ProcessLifecycleOwner — used by RateCardApp to fire an auto-sync
+    // when the user resumes the app after ≥ 5 min away. Tiny artifact
+    // (~10 KB) and lets us avoid a stale-edit-on-cold-start surprise
+    // without adding any periodic background work.
+    implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.activity.compose)
 
     val composeBom = platform(libs.androidx.compose.bom)

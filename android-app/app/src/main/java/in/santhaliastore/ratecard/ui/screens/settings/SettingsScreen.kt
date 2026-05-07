@@ -191,13 +191,20 @@ fun SettingsScreen(
             // when the editor is open. We deliberately use Time.displayDateTime
             // (not the system DateFormat) so Settings and Home speak in
             // the same absolute format — `5 May 2026 2:30 PM`.
-            val lastSyncText = if (state.lastSyncedAt > 0L) {
-                stringResource(
+            //
+            // While ANY sync is running (auto-sync on resume, post-write
+            // debounced auto-sync, or the manual button) we flip to
+            // "Sync ho raha hai…" so the user always sees what's actually
+            // happening. The repository's `isSyncing` is the single
+            // source of truth — both the summary card here and the Home
+            // screen line read from the same flag.
+            val lastSyncText = when {
+                state.syncing -> stringResource(R.string.sync_status_in_progress)
+                state.lastSyncedAt > 0L -> stringResource(
                     R.string.sync_last_synced_format,
                     Time.displayDateTime(state.lastSyncedAt)
                 )
-            } else {
-                stringResource(R.string.sync_never)
+                else -> stringResource(R.string.sync_never)
             }
 
             // ----- Group 1: URL block (collapsed summary OR editable field) -----

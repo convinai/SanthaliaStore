@@ -47,14 +47,29 @@ class SettingsViewModel(
 
     private val _testing = MutableStateFlow(false)
     private val _testResult = MutableStateFlow<TestResult?>(null)
-    private val _syncing = MutableStateFlow(false)
+
+    /**
+     * Single source of truth for "is anything sync-shaped happening"
+     * lives on [SyncRepository.isSyncing]. We collect it here so the
+     * Settings snapshot can tick the same flag during:
+     *   - manual `Sync now` (Settings or Home)
+     *   - app-resume auto-sync
+     *   - debounced post-write auto-sync
+     * That keeps the Settings "Sync now" button greyed out and the
+     * "Last sync" line flipped to "Sync ho raha hai…" for ALL of those
+     * cases, so the user never sees the system mid-sync without an
+     * indicator. The previous local `_syncing` was redundant once the
+     * repository owned the flag.
+     */
+    private val syncingFlow = syncRepo.isSyncing
     /**
      * Drives the fullscreen blocking spinner shown over the Settings
      * screen while the destructive "Reset local data" action is in
-     * flight. Independent from [_syncing] because reset includes both
-     * a local wipe and a full pull, and we want a stronger UI gate
-     * (the user just confirmed a destructive action — they shouldn't
-     * be able to tap anything else until the recovery resolves).
+     * flight. Independent from [syncingFlow] because reset includes
+     * both a local wipe and a full pull, and we want a stronger UI
+     * gate (the user just confirmed a destructive action — they
+     * shouldn't be able to tap anything else until the recovery
+     * resolves).
      */
     private val _resetting = MutableStateFlow(false)
 
@@ -114,7 +129,7 @@ class SettingsViewModel(
         settingsRepo.pinEnabled,
         settingsRepo.lastSyncedAt,
         settingsRepo.lastSyncError,
-        combine(_testing, _testResult, _syncing, _resetting, pendingCountFlow) {
+        combine(_testing, _testResult, syncingFlow, _resetting, pendingCountFlow) {
                 testing, testRes, syncing, resetting, pending ->
             Quint(testing, testRes, syncing, resetting, pending)
         }
@@ -154,8 +169,8 @@ class SettingsViewModel(
     }
 
     /**
-     * "Sync now" — runs pull → apply → push inline (no background work)
-     * so the outcome shows up on the Settings screen immediately.
+     * "Sync now" — runs push → pull inline (no background work) so the
+     * outcome shows up on the Settings screen immediately.
      *
      * Surfaces every outcome via the snackbar channel:
      *   - Success           -> [UiEvent.SyncSuccess] with the three
@@ -163,13 +178,18 @@ class SettingsViewModel(
      *                          pulled items, pulled entries).
      *   - Failure           -> [UiEvent.SyncFailure] carrying the
      *                          error message verbatim.
+     *
+     * Re-entrancy: the syncing flag is read from
+     * [SyncRepository.isSyncing] (the same flag that's flipped by
+     * auto-sync paths) so a tap arriving while ANY sync is in flight
+     * is dropped on the floor here. The repository's mutex guarantees
+     * the same at the data layer, so even if the UI guard slips, two
+     * syncs cannot run in parallel.
      */
     fun syncNow() {
-        if (_syncing.value) return // ignore double taps
-        _syncing.value = true
+        if (syncingFlow.value) return // ignore taps while any sync is running
         viewModelScope.launch {
             val result = syncRepo.runFullSyncNow()
-            _syncing.value = false
             val event = when (result) {
                 is AppResult.Ok -> UiEvent.SyncSuccess(
                     pushed = result.value.pushedRows,

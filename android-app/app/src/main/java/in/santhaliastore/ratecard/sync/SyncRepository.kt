@@ -10,7 +10,12 @@ import `in`.santhaliastore.ratecard.data.repo.ItemRepository
 import `in`.santhaliastore.ratecard.data.repo.PurchaseRepository
 import `in`.santhaliastore.ratecard.util.AppResult
 import `in`.santhaliastore.ratecard.util.appResultOf
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Orchestrator that knows how to:
@@ -18,18 +23,35 @@ import kotlinx.coroutines.flow.first
  *   2) Pull server changes via `pullChanges` and apply them atomically.
  *   3) Push pending local changes in batches.
  *
- * This app deliberately does NOT run background sync (battery cost on
- * a low-end phone). The user drives every sync via the Home refresh
- * button or Settings → "Sync now"; both paths call [runFullSyncNow]
- * which performs **push → pull** in that order.
+ * The app does NOT run periodic background sync (no WorkManager,
+ * no scheduled jobs — battery cost on a low-end phone). Every sync is
+ * tied to user activity:
  *
- * Why push-first: the user's mental model is "my edits go up, then I
- * read back what other phones did". If push fails (no network, server
- * down) we abort BEFORE pulling — pulling now would inject server state
- * on top of edits we never managed to record on the server, which
- * looks to the user like silent data loss. Conflict resolution still
- * works because Apps Script applies last-write-wins by `updatedAt`
- * regardless of which side acted first.
+ *   - Manual refresh / Settings → "Sync now": calls [runFullSyncNow]
+ *     and surfaces the outcome via a snackbar.
+ *   - Auto-sync on app start / resume after ≥ 5 min away: calls
+ *     [runAutoSync] silently — no snackbar, errors land in
+ *     `lastSyncError` for the user to inspect on Settings if they care.
+ *   - Auto-sync after a local save / delete: a debounced fire-and-forget
+ *     [runAutoSync] coalesces a burst of writes into a single push.
+ *
+ * Both entry points perform **push → pull** in that order. Why push-first:
+ * the user's mental model is "my edits go up, then I read back what other
+ * phones did". If push fails (no network, server down) we abort BEFORE
+ * pulling — pulling now would inject server state on top of edits we never
+ * managed to record on the server, which looks to the user like silent data
+ * loss. Conflict resolution still works because Apps Script applies
+ * last-write-wins by `updatedAt` regardless of which side acted first.
+ *
+ * **Single-flight**: [syncMutex] guards both [runFullSyncNow] and
+ * [runAutoSync] so they can never run in parallel. A manual tap that
+ * arrives while an auto-sync is in flight waits for the auto-sync to
+ * finish (typically <1 s) and then runs immediately.
+ *
+ * **Single source of truth for "is anything syncing"**: [isSyncing]
+ * flips to `true` for the duration of any sync (auto or manual) and
+ * back to `false` on exit. Both Home and Settings observe this so a
+ * single indicator covers both flavours of sync.
  */
 class SyncRepository(
     private val database: AppDatabase,
@@ -40,6 +62,24 @@ class SyncRepository(
     private val pullApplier: PullApplier,
     private val apiFactory: () -> AppsScriptApi
 ) {
+
+    /**
+     * Single-flight gate shared by [runFullSyncNow] and [runAutoSync].
+     * `withLock` (manual) and `tryLock` (auto) means: a manual tap waits
+     * for any in-flight sync to finish; an overlapping auto-sync request
+     * is dropped silently. Either way no two syncs ever overlap.
+     */
+    private val syncMutex = Mutex()
+
+    private val _isSyncing = MutableStateFlow(false)
+
+    /**
+     * `true` while any sync (auto or manual) is in progress. Drives
+     * the Home refresh-button spinner AND the "Sync ho raha hai…"
+     * line under the search bar / on Settings. Single source of truth
+     * — both screens collect from this same flow.
+     */
+    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
     companion object {
         // The server caps a single bulkSync request at 200 changes.
@@ -87,8 +127,29 @@ class SyncRepository(
      *
      * The result is mirrored into [SettingsRepository] (`lastSyncedAt`
      * / `lastSyncError`) so the UI stays consistent.
+     *
+     * Single-flight via [syncMutex]: if an auto-sync is already in
+     * flight, the manual tap waits for it to finish (typically <1 s)
+     * and then runs. Two manual taps in a row queue up the same way —
+     * the second runs the moment the first completes. Both UI surfaces
+     * already disable their refresh button while [isSyncing] is true,
+     * so in practice the wait is invisible to the user.
      */
-    suspend fun runFullSyncNow(): AppResult<SyncOutcome> {
+    suspend fun runFullSyncNow(): AppResult<SyncOutcome> = syncMutex.withLock {
+        _isSyncing.value = true
+        try {
+            runFullSyncInternal()
+        } finally {
+            _isSyncing.value = false
+        }
+    }
+
+    /**
+     * Internal push-then-pull body shared by [runFullSyncNow] and
+     * [runAutoSync]. Assumes the caller already holds [syncMutex] and
+     * has flipped [_isSyncing] to `true`.
+     */
+    private suspend fun runFullSyncInternal(): AppResult<SyncOutcome> {
         val url = settings.sheetUrl.first()
         if (url.isBlank()) {
             val message = "Sheet URL not set"
@@ -136,6 +197,47 @@ class SyncRepository(
                 pulledEntries = pullOutcome.entriesApplied
             )
         )
+    }
+
+    /**
+     * Silent, activity-triggered auto-sync.
+     *
+     * Differs from [runFullSyncNow] in three ways:
+     *   1. **No-URL is a silent skip** — no error is recorded, no log
+     *      spam, nothing surfaces in `lastSyncError`. A fresh install
+     *      with no Sheet URL configured shouldn't see a "Sheet URL not
+     *      set" error every time it auto-syncs.
+     *   2. **Single-flight via `tryLock`, not `withLock`** — if a sync
+     *      is already in progress (auto or manual), the request is
+     *      dropped on the floor instead of queueing. Multiple write
+     *      events that fire while a push is in flight collapse into
+     *      one; the trailing edge of the debouncer catches the latest
+     *      state on the next run.
+     *   3. **Errors are swallowed by the caller-facing return** —
+     *      we still write `lastSyncError` so Settings → Sync details
+     *      shows the failure, but nothing propagates back. The Home /
+     *      Settings snackbar is reserved for manual sync only.
+     *
+     * On success, [SettingsRepository.setLastSyncedNow] still fires so
+     * the "Last sync" line on Home / Settings updates naturally.
+     */
+    suspend fun runAutoSync() {
+        val url = settings.sheetUrl.first()
+        if (url.isBlank()) return // silent skip: no URL configured
+
+        val locked = syncMutex.tryLock()
+        if (!locked) return // single-flight: drop overlapping requests
+
+        _isSyncing.value = true
+        try {
+            // Discard the AppResult — auto-sync never propagates errors
+            // to its caller. lastSyncError is already populated by
+            // runFullSyncInternal on failure (Settings UI surfaces it).
+            runCatching { runFullSyncInternal() }
+        } finally {
+            _isSyncing.value = false
+            syncMutex.unlock()
+        }
     }
 
     /**

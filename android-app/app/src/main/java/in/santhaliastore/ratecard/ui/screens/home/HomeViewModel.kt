@@ -89,13 +89,21 @@ class HomeViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0L)
 
     /**
-     * `true` while the manual Home refresh is running. Drives the
-     * top-bar spinner. Independent from [syncStatus] (which also flips
-     * when the background WorkManager job runs) so a tap on the
-     * refresh button always shows progress immediately.
+     * `true` while ANY sync (manual refresh, app-resume auto-sync, or
+     * post-write debounced auto-sync) is in progress. Drives both:
+     *   - the top-bar refresh icon → spinner swap
+     *   - the "Sync ho raha hai…" line under the search bar
+     *
+     * Single source of truth lives on [SyncRepository.isSyncing] so
+     * Home and Settings cannot disagree about sync state. The local
+     * `_syncing` field that used to exist here was dropped — its
+     * lifecycle was a strict subset of the repository flag, and
+     * keeping two state holders meant the "auto-sync just kicked
+     * off" case wouldn't light up the UI. See [HomeViewModel.syncNow]
+     * for how re-entrant manual taps are still suppressed.
      */
-    private val _syncing = MutableStateFlow(false)
-    val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
+    val syncing: StateFlow<Boolean> = syncRepo.isSyncing
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /** One-shot UI events (snackbars). Buffered so we never drop one. */
     private val _events = Channel<UiEvent>(Channel.BUFFERED)
@@ -128,15 +136,20 @@ class HomeViewModel(
     /**
      * Manual refresh from the Home top app bar — runs the full
      * push-then-pull sync inline and surfaces the outcome as a
-     * snackbar. Ignores re-entrant taps so a double-tap doesn't
-     * spawn two parallel syncs.
+     * snackbar.
+     *
+     * Re-entrancy: the [syncRepo] mutex single-flights syncs at the
+     * data layer (a manual tap arriving while an auto-sync is in
+     * flight waits for it to finish, then runs). The [syncing] flag
+     * already disables the refresh button while any sync is in
+     * progress, so a normal user can't double-fire from the UI; this
+     * `if` is belt-and-suspenders for adb / accessibility paths that
+     * could synthesise rapid taps.
      */
     fun syncNow() {
-        if (_syncing.value) return // ignore double taps
-        _syncing.value = true
+        if (syncing.value) return // ignore taps while any sync is running
         viewModelScope.launch {
             val result = syncRepo.runFullSyncNow()
-            _syncing.value = false
             val event = when (result) {
                 is AppResult.Ok -> UiEvent.SyncSuccess(
                     pushed = result.value.pushedRows,

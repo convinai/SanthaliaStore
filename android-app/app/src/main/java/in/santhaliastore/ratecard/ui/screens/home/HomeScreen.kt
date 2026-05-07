@@ -113,14 +113,19 @@ fun HomeScreen(
         }
     }
 
-    // Pre-resolve the "never synced" copy so the derived state below
-    // can stay pure (no Composable calls inside the lambda).
+    // Pre-resolve the "never synced" / in-progress / format copy so the
+    // derived state below can stay pure (no Composable calls inside the
+    // lambda). The in-progress label is the same string the SyncStatus
+    // chip uses elsewhere — keeping a single resource means we only
+    // translate one piece of copy when we add a new locale.
     val neverSyncedLabel = stringResource(R.string.home_never_synced)
     val lastSyncFormat = stringResource(R.string.home_last_sync_format)
+    val syncInProgressLabel = stringResource(R.string.sync_status_in_progress)
 
-    // Format the absolute-time string off the timestamp.
-    // `derivedStateOf` keeps the recomposition scoped to just the
-    // status line — the rest of Home doesn't re-render when the
+    // Format the absolute-time string off the timestamp — but flip to
+    // the in-progress label whenever a sync (auto or manual) is
+    // running. `derivedStateOf` keeps the recomposition scoped to just
+    // the status line — the rest of Home doesn't re-render when the
     // value flips.
     //
     // We use absolute format ("5 May 2026 2:30 PM") rather than
@@ -128,12 +133,12 @@ fun HomeScreen(
     // notes care about WHEN the data was fresh, not how long ago
     // that was — a relative label silently changes meaning the
     // moment they walk away from the screen.
-    val lastSyncLine by remember(lastSyncedAt) {
+    val lastSyncLine by remember(lastSyncedAt, syncing) {
         derivedStateOf {
-            if (lastSyncedAt <= 0L) {
-                neverSyncedLabel
-            } else {
-                lastSyncFormat.format(Time.displayDateTime(lastSyncedAt))
+            when {
+                syncing -> syncInProgressLabel
+                lastSyncedAt <= 0L -> neverSyncedLabel
+                else -> lastSyncFormat.format(Time.displayDateTime(lastSyncedAt))
             }
         }
     }
