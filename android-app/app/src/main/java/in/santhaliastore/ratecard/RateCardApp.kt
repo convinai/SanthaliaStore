@@ -178,14 +178,20 @@ class RateCardApp : Application(), Configuration.Provider {
          * [nowMillis] is at least [RESUME_AUTO_SYNC_THRESHOLD_MS].
          *
          * `lastForegroundMillis == 0L` means "we've never seen a
-         * foreground event before" — i.e. cold start. We always
-         * sync on cold start, so the predicate must return true for
-         * that case (and naturally does, since `now - 0 >= 5min`
-         * for any plausible system clock).
+         * foreground event before" — i.e. cold start. We always sync
+         * on cold start, so we short-circuit to `true` BEFORE doing
+         * the arithmetic. Naive `now - 0 >= 5min` works for a real
+         * system clock but breaks the test's `nowMillis = 1L` case
+         * AND would silently break on a device whose clock starts at
+         * the epoch (rare, but real on some test runners and on
+         * freshly-imaged devices before NTP).
          */
         fun shouldAutoSyncOnResume(
             nowMillis: Long,
             lastForegroundMillis: Long
-        ): Boolean = (nowMillis - lastForegroundMillis) >= RESUME_AUTO_SYNC_THRESHOLD_MS
+        ): Boolean {
+            if (lastForegroundMillis == 0L) return true
+            return (nowMillis - lastForegroundMillis) >= RESUME_AUTO_SYNC_THRESHOLD_MS
+        }
     }
 }
