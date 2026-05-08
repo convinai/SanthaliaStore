@@ -116,6 +116,7 @@
     <string name="home_refresh_cd">Refresh karein</string>
     <string name="home_last_sync_format">Last sync: %1$s</string>
     <string name="home_never_synced">Abhi tak sync nahi hua</string>
+    <string name="home_total_items_format">%1$d items</string>
 
     <!-- Settings -->
     <string name="settings_title">Settings</string>

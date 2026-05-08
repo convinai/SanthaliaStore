@@ -224,17 +224,24 @@ fun HomeScreen(
                 )
             }
 
-            // "Last sync" status line — sits directly under the search
-            // bar, right-aligned so it pairs visually with the refresh
-            // button it tells the story of. Tiny, muted, never the focal
-            // point but always available when two phone owners are
-            // wondering whether they're on the same data.
+            // Status bar under the search field. Two muted lines on a
+            // single row: total active items count on the left, last
+            // sync on the right. The split layout pairs each line with
+            // the affordance it relates to — count grows with adds (the
+            // FAB), sync grows with the refresh button in the top bar.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 16.dp, end = 16.dp, top = 12.dp),
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                Text(
+                    text = stringResource(R.string.home_total_items_format, totalCount),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
                 Text(
                     text = lastSyncLine,
                     style = MaterialTheme.typography.bodySmall,
