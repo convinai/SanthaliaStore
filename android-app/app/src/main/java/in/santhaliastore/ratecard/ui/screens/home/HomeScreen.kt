@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -354,18 +354,15 @@ private fun ItemRow(
                 )
             }
 
-            // Trailing: price + date stacked, end-aligned. When there
-            // is no purchase yet, fall back to a single muted caption.
-            //
-            // The whole column is capped at 140 dp so even if a stray
-            // string slips through (e.g. a Date.toString() locale dump
-            // from a misbehaving server payload) the row physically
-            // cannot push the leading code chip + name off-screen. The
-            // children also clamp themselves to maxLines=1 + ellipsis,
-            // belt-and-suspenders style.
+            // Trailing: price + date stacked, end-aligned. Fixed width
+            // (not widthIn-max) so the rate column starts at the same
+            // x-position on every row — the list reads as a clean grid
+            // instead of jittering with each row's content length.
+            // Children clamp themselves to maxLines=1 + ellipsis so a
+            // long unit ("Packets") doesn't break the column.
             Column(
                 horizontalAlignment = Alignment.End,
-                modifier = Modifier.widthIn(max = 140.dp)
+                modifier = Modifier.width(120.dp)
             ) {
                 if (row.lastPrice != null) {
                     val rateText = if (!row.unit.isNullOrBlank()) {
@@ -409,15 +406,17 @@ private fun ItemRow(
 private fun CodeChip(code: String) {
     Box(
         Modifier
-            // Cap the chip so a 50-char code can't push the name (or
-            // worse, the trailing price) off the row. Single line +
-            // ellipsis keeps the row exactly one line tall.
-            .widthIn(max = 96.dp)
+            // Fixed width — about 8 monospace characters at labelMedium.
+            // Anchors the row's leading edge so the name always begins
+            // at the same x-position regardless of the code's length.
+            // Long codes ellipsis; short codes sit centered in the chip.
+            .width(80.dp)
             .background(
                 color = MaterialTheme.colorScheme.primaryContainer,
                 shape = RoundedCornerShape(6.dp)
             )
-            .padding(horizontal = 8.dp, vertical = 3.dp)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+        contentAlignment = Alignment.Center
     ) {
         Text(
             text = code,

@@ -16,8 +16,8 @@ android {
         // Bumped from 1 / "1.0.0" to invalidate launcher icon caches on
         // MIUI / One UI / themed-icon launchers that key the cached icon
         // by package + versionCode + signature.
-        versionCode = 10
-        versionName = "1.0.9"
+        versionCode = 11
+        versionName = "1.0.10"
 
         // Vector drawables — supportLibrary lets older devices render them too.
         vectorDrawables {
