@@ -164,8 +164,14 @@ fun AddEditItemScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .padding(horizontal = 16.dp, vertical = 8.dp)
-                .verticalScroll(rememberScrollState())
+                // imePadding MUST come before verticalScroll so the
+                // scroll viewport itself shrinks when the keyboard
+                // opens. With the reverse order, imePadding only pads
+                // the scroll content and bringIntoView ends up scrolling
+                // the field into a viewport whose bottom half is
+                // covered by the keyboard.
                 .imePadding()
+                .verticalScroll(rememberScrollState())
         ) {
             OutlinedTextField(
                 value = code,

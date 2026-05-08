@@ -123,8 +123,16 @@ fun AddEditEntryScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .padding(horizontal = 16.dp, vertical = 8.dp)
-                .verticalScroll(rememberScrollState())
+                // imePadding MUST come before verticalScroll so the
+                // scroll viewport itself shrinks when the keyboard
+                // opens. With the reverse order, imePadding only pads
+                // the scroll content and the viewport still extends
+                // behind the keyboard — bringIntoView then "succeeds"
+                // by scrolling the field into the viewport, but the
+                // bottom half of that viewport is covered by the IME,
+                // so the field still ends up hidden.
                 .imePadding()
+                .verticalScroll(rememberScrollState())
         ) {
             // Date — read-only field that opens a DatePickerDialog
             OutlinedTextField(

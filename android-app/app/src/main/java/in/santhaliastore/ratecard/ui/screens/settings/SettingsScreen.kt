@@ -182,8 +182,11 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .padding(horizontal = 16.dp, vertical = 8.dp)
-                .verticalScroll(rememberScrollState())
+                // imePadding MUST come before verticalScroll so the
+                // scroll viewport itself shrinks when the keyboard
+                // opens — see AddEditEntryScreen for the full note.
                 .imePadding()
+                .verticalScroll(rememberScrollState())
         ) {
             SectionTitle(stringResource(R.string.settings_section_sync))
 
