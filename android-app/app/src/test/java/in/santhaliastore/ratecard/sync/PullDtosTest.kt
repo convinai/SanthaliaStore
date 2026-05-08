@@ -87,7 +87,7 @@ class PullDtosTest {
                 itemCode = "BC100",
                 date = "2026-05-04",
                 pricePerUnit = 21.5,
-                quantity = 100.0,
+                quantity = "100",
                 supplier = "Sharma Traders",
                 notes = "Bulk",
                 updatedAt = "2026-05-04T10:00:00Z",
@@ -100,7 +100,7 @@ class PullDtosTest {
             "\"itemCode\":\"BC100\"",
             "\"date\":\"2026-05-04\"",
             "\"pricePerUnit\":21.5",
-            "\"quantity\":100.0",
+            "\"quantity\":\"100\"",
             "\"supplier\":\"Sharma Traders\"",
             "\"notes\":\"Bulk\"",
             "\"updatedAt\":\"2026-05-04T10:00:00Z\"",
@@ -133,7 +133,7 @@ class PullDtosTest {
                 {"code":"A","name":"Apple","unit":"Kg","updatedAt":"2026-05-04T10:00:00Z","deleted":false,"serverUpdatedAt":"2026-05-04T10:00:01Z"}
               ],
               "entries": [
-                {"entryId":"u","itemCode":"A","date":"2026-05-04","pricePerUnit":50.0,"quantity":1.5,"supplier":null,"notes":null,"updatedAt":"2026-05-04T10:00:00Z","deleted":false,"serverUpdatedAt":"2026-05-04T10:00:01Z"}
+                {"entryId":"u","itemCode":"A","date":"2026-05-04","pricePerUnit":50.0,"quantity":"1.5 kg","supplier":null,"notes":null,"updatedAt":"2026-05-04T10:00:00Z","deleted":false,"serverUpdatedAt":"2026-05-04T10:00:01Z"}
               ],
               "cursor": "next-token",
               "schemaVersion": 1,

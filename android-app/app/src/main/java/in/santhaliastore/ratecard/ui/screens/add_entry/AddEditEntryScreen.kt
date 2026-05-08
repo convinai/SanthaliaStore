@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import `in`.santhaliastore.ratecard.R
+import `in`.santhaliastore.ratecard.ui.components.bringIntoViewOnFocus
 import `in`.santhaliastore.ratecard.util.Time
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -146,7 +147,9 @@ fun AddEditEntryScreen(
                 },
                 isError = state.dateError != null,
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .bringIntoViewOnFocus()
             )
 
             Spacer(Modifier.height(16.dp))
@@ -172,21 +175,25 @@ fun AddEditEntryScreen(
                     keyboardType = KeyboardType.Decimal,
                     imeAction = ImeAction.Next
                 ),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .bringIntoViewOnFocus()
             )
 
             Spacer(Modifier.height(16.dp))
 
             OutlinedTextField(
                 value = quantity,
-                onValueChange = { quantity = it.filter { ch -> ch.isDigit() || ch == '.' } },
+                onValueChange = { quantity = it },
                 label = { Text(stringResource(R.string.field_entry_quantity)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Decimal,
+                    keyboardType = KeyboardType.Text,
                     imeAction = ImeAction.Next
                 ),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .bringIntoViewOnFocus()
             )
 
             Spacer(Modifier.height(16.dp))
@@ -197,7 +204,9 @@ fun AddEditEntryScreen(
                 label = { Text(stringResource(R.string.field_entry_supplier)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .bringIntoViewOnFocus()
             )
 
             Spacer(Modifier.height(16.dp))
@@ -209,7 +218,8 @@ fun AddEditEntryScreen(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(96.dp),
+                    .height(96.dp)
+                    .bringIntoViewOnFocus(),
                 maxLines = 3
             )
 

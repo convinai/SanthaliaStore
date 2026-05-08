@@ -65,6 +65,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import `in`.santhaliastore.ratecard.BuildConfig
 import `in`.santhaliastore.ratecard.R
+import `in`.santhaliastore.ratecard.ui.components.bringIntoViewOnFocus
 import `in`.santhaliastore.ratecard.ui.screens.settings.SettingsViewModel.TestResult
 import `in`.santhaliastore.ratecard.ui.screens.settings.SettingsViewModel.UiEvent
 import `in`.santhaliastore.ratecard.util.Time
@@ -236,7 +237,9 @@ fun SettingsScreen(
                         keyboardType = KeyboardType.Uri,
                         imeAction = ImeAction.Done
                     ),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .bringIntoViewOnFocus()
                 )
                 Spacer(Modifier.height(8.dp))
                 Row(
@@ -732,7 +735,9 @@ private fun PinEntryDialog(
                         imeAction = ImeAction.Next
                     ),
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .bringIntoViewOnFocus()
                 )
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
@@ -749,7 +754,9 @@ private fun PinEntryDialog(
                     supportingText = {
                         if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error)
                     },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .bringIntoViewOnFocus()
                 )
             }
         },

@@ -428,7 +428,7 @@ private fun EntryRow(
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
                 val secondary = buildList {
-                    entry.quantity?.let { add("Qty: ${Money.plain(it)}") }
+                    entry.quantity?.takeIf { it.isNotBlank() }?.let { add("Qty: $it") }
                     entry.supplier?.takeIf { it.isNotBlank() }?.let { add(it) }
                 }
                 if (secondary.isNotEmpty()) {

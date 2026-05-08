@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import `in`.santhaliastore.ratecard.R
+import `in`.santhaliastore.ratecard.ui.components.bringIntoViewOnFocus
 import `in`.santhaliastore.ratecard.util.Time
 
 /**
@@ -191,7 +192,9 @@ fun AddEditItemScreen(
                     capitalization = KeyboardCapitalization.Characters,
                     imeAction = ImeAction.Next
                 ),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .bringIntoViewOnFocus()
             )
 
             Spacer(Modifier.height(16.dp))
@@ -219,7 +222,9 @@ fun AddEditItemScreen(
                     capitalization = KeyboardCapitalization.Words,
                     imeAction = ImeAction.Next
                 ),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .bringIntoViewOnFocus()
             )
 
             Spacer(Modifier.height(16.dp))
@@ -250,6 +255,7 @@ fun AddEditItemScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .menuAnchor()
+                        .bringIntoViewOnFocus()
                 )
                 ExposedDropdownMenu(
                     expanded = unitMenuExpanded,
@@ -304,7 +310,9 @@ fun AddEditItemScreen(
                         }
                     },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .bringIntoViewOnFocus()
                 )
 
                 Spacer(Modifier.height(16.dp))
@@ -330,23 +338,25 @@ fun AddEditItemScreen(
                         keyboardType = KeyboardType.Decimal,
                         imeAction = ImeAction.Next
                     ),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .bringIntoViewOnFocus()
                 )
 
                 Spacer(Modifier.height(16.dp))
 
                 OutlinedTextField(
                     value = entryQuantity,
-                    onValueChange = {
-                        entryQuantity = it.filter { ch -> ch.isDigit() || ch == '.' }
-                    },
+                    onValueChange = { entryQuantity = it },
                     label = { Text(stringResource(R.string.field_entry_quantity)) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Decimal,
+                        keyboardType = KeyboardType.Text,
                         imeAction = ImeAction.Next
                     ),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .bringIntoViewOnFocus()
                 )
 
                 Spacer(Modifier.height(16.dp))
@@ -357,7 +367,9 @@ fun AddEditItemScreen(
                     label = { Text(stringResource(R.string.field_entry_supplier)) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .bringIntoViewOnFocus()
                 )
 
                 Spacer(Modifier.height(16.dp))
@@ -369,7 +381,8 @@ fun AddEditItemScreen(
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(96.dp),
+                        .height(96.dp)
+                        .bringIntoViewOnFocus(),
                     maxLines = 3
                 )
             }

@@ -39,7 +39,11 @@ data class PurchaseEntryEntity(
     val itemCode: String,
     val date: String,
     val pricePerUnit: Double,
-    val quantity: Double?,
+    // Free-form text — kirana shop owners write quantities like "5 kg",
+    // "1 packet", "aadha kilo" alongside plain numbers, so the column
+    // is a String. Migration v1→v2 converts the legacy REAL values
+    // (rendered as their plain-number string) in place.
+    val quantity: String?,
     val supplier: String?,
     val notes: String?,
     val updatedAt: String,

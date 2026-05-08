@@ -33,7 +33,7 @@ class PurchaseRepository(
         itemCode: String,
         date: String,
         pricePerUnit: Double,
-        quantity: Double?,
+        quantity: String?,
         supplier: String?,
         notes: String?
     ): PurchaseEntryEntity {
@@ -42,7 +42,7 @@ class PurchaseRepository(
             itemCode = itemCode,
             date = date,
             pricePerUnit = pricePerUnit,
-            quantity = quantity,
+            quantity = quantity?.trim()?.takeIf { it.isNotEmpty() },
             supplier = supplier?.trim()?.takeIf { it.isNotEmpty() },
             notes = notes?.trim()?.takeIf { it.isNotEmpty() },
             updatedAt = Time.nowIso(),

@@ -161,7 +161,8 @@ class AddEditItemViewModel(
                     itemCode = trimmedCode,
                     date = initialDate.ifBlank { `in`.santhaliastore.ratecard.util.Time.todayLocal() },
                     pricePerUnit = priceValue,
-                    quantity = initialQuantity.trim().toDoubleOrNull(),
+                    // Free-form text — the repo trims and nulls empty.
+                    quantity = initialQuantity,
                     supplier = initialSupplier.trim().ifEmpty { null },
                     notes = initialNotes.trim().ifEmpty { null }
                 )

@@ -87,7 +87,7 @@ class SyncDtosTest {
                 itemCode = "BC100",
                 date = "2026-05-04",
                 pricePerUnit = 21.5,
-                quantity = 100.0,
+                quantity = "100",
                 supplier = "Sharma Traders",
                 notes = "Bulk",
                 updatedAt = "2026-05-04T10:00:00Z"
@@ -99,7 +99,7 @@ class SyncDtosTest {
             "\"itemCode\":\"BC100\"",
             "\"date\":\"2026-05-04\"",
             "\"pricePerUnit\":21.5",
-            "\"quantity\":100.0",
+            "\"quantity\":\"100\"",
             "\"supplier\":\"Sharma Traders\"",
             "\"notes\":\"Bulk\"",
             "\"updatedAt\":\"2026-05-04T10:00:00Z\""

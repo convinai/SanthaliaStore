@@ -66,7 +66,7 @@ class AddEditEntryViewModel(
                         resolvedItemCode = existing.itemCode,
                         initialDate = existing.date,
                         initialPrice = existing.pricePerUnit.toString(),
-                        initialQuantity = existing.quantity?.toString().orEmpty(),
+                        initialQuantity = existing.quantity.orEmpty(),
                         initialSupplier = existing.supplier.orEmpty(),
                         initialNotes = existing.notes.orEmpty()
                     )
@@ -93,7 +93,6 @@ class AddEditEntryViewModel(
             _state.update { it.copy(dateError = "date_invalid") }
             return
         }
-        val quantity = `in`.santhaliastore.ratecard.util.Money.parse(quantityText)
 
         val current = _state.value
         viewModelScope.launch {
@@ -103,7 +102,8 @@ class AddEditEntryViewModel(
                 itemCode = current.resolvedItemCode,
                 date = date,
                 pricePerUnit = price,
-                quantity = quantity,
+                // Free-form text — the repo trims and nulls empty.
+                quantity = quantityText,
                 supplier = supplier,
                 notes = notes
             )

@@ -61,14 +61,20 @@ data class DeleteItemPayload(
     val updatedAt: String
 )
 
-/** `upsertEntry` payload. `quantity`, `supplier`, `notes` nullable. */
+/**
+ * `upsertEntry` payload. `quantity`, `supplier`, `notes` nullable.
+ *
+ * `quantity` is a free-form String so kirana shop owners can record
+ * informal units like "5 kg" or "1 packet" alongside plain numbers.
+ * The Apps Script endpoint stores it verbatim.
+ */
 @JsonClass(generateAdapter = true)
 data class UpsertEntryPayload(
     val entryId: String,
     val itemCode: String,
     val date: String,
     val pricePerUnit: Double,
-    val quantity: Double?,
+    val quantity: String?,
     val supplier: String?,
     val notes: String?,
     val updatedAt: String
@@ -195,7 +201,7 @@ data class PulledEntry(
     val itemCode: String,
     val date: String,
     val pricePerUnit: Double,
-    val quantity: Double?,
+    val quantity: String?,
     val supplier: String?,
     val notes: String?,
     val updatedAt: String,

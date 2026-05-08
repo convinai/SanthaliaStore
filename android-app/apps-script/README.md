@@ -169,7 +169,7 @@ The script auto-creates these tabs. You should not edit them by hand.
 | `itemCode` | TEXT | Foreign key — must match a `code` in `Items`. |
 | `date` | TEXT (`YYYY-MM-DD`) | Purchase date. |
 | `pricePerUnit` | NUMBER | Price for one unit on that date. |
-| `quantity` | NUMBER (optional) | How many units bought. |
+| `quantity` | TEXT (optional) | Free-form quantity (e.g. `5 kg`, `1 packet`, `2.5`). |
 | `supplier` | TEXT (optional) | Vendor / shop name. |
 | `notes` | TEXT (optional) | Free-form notes. |
 | `updatedAt` | TEXT (ISO 8601) | Last edit timestamp. |

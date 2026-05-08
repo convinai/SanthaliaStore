@@ -86,7 +86,10 @@ const LOCK_TIMEOUT_MS = 30 * 1000;
 // normalized on read by toIsoTimestamp_ / toLocalDate_.
 const TEXT_FORMAT_COLS = {
   Items:           ['updatedAt', 'serverUpdatedAt'],
-  PurchaseEntries: ['date', 'updatedAt', 'serverUpdatedAt']
+  // `quantity` is free-form (e.g. "5 kg", "1 packet") so we keep it
+  // plain-text too. Without this, a value like "1.5" would be coerced
+  // into a number on the way back, breaking the String|null contract.
+  PurchaseEntries: ['date', 'quantity', 'updatedAt', 'serverUpdatedAt']
 };
 
 
@@ -562,8 +565,12 @@ function upsertEntryInMemory_(ctx, payload, index) {
     const itemCode  = requireString_(payload && payload.itemCode, 'itemCode');
     const date      = requireString_(payload && payload.date, 'date');
     const pricePerUnit = requireNumber_(payload && payload.pricePerUnit, 'pricePerUnit');
+    // Quantity is free-form text (e.g. "5 kg", "1 packet") — keep
+    // strings verbatim. Legacy numeric payloads from older clients
+    // still arrive as JSON numbers; coerce them to strings so the
+    // sheet column stays uniformly typed.
     const quantity  = (payload && payload.quantity !== undefined && payload.quantity !== null && payload.quantity !== '')
-                        ? Number(payload.quantity) : '';
+                        ? String(payload.quantity) : '';
     const supplier  = String((payload && payload.supplier) || '');
     const notes     = String((payload && payload.notes) || '');
     const updatedAt = requireString_(payload && payload.updatedAt, 'updatedAt');
@@ -1109,10 +1116,13 @@ function rowToItemDto_(row, colIndex) {
 
 /** Sheet row → PurchaseEntries DTO sent to the client. */
 function rowToEntryDto_(row, colIndex) {
+  // Quantity is free-form text on the wire. The cell may still hold
+  // a numeric value left over from older writes — coerce to a plain
+  // string in that case so clients always see a String|null.
   const rawQty = row[colIndex.quantity];
   const quantity = (rawQty === '' || rawQty === null || rawQty === undefined)
     ? null
-    : Number(rawQty);
+    : String(rawQty);
 
   const rawPrice = row[colIndex.pricePerUnit];
   const pricePerUnit = (rawPrice === '' || rawPrice === null || rawPrice === undefined)
@@ -1124,7 +1134,7 @@ function rowToEntryDto_(row, colIndex) {
     itemCode:        toPlainText_(row[colIndex.itemCode]),
     date:            toLocalDate_(row[colIndex.date]),
     pricePerUnit:    pricePerUnit,
-    quantity:        (quantity === null || isNaN(quantity)) ? null : quantity,
+    quantity:        quantity,
     supplier:        toPlainText_(row[colIndex.supplier]),
     notes:           toPlainText_(row[colIndex.notes]),
     updatedAt:       toIsoTimestamp_(row[colIndex.updatedAt]),
