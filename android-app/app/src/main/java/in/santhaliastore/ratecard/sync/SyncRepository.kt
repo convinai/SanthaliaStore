@@ -62,6 +62,7 @@ class SyncRepository(
     private val purchaseRepo: PurchaseRepository,
     private val billRepo: BillRepository,
     private val billImageCache: BillImageCache,
+    private val billImageUploader: BillImageUploader,
     private val settings: SettingsRepository,
     private val crashRepo: CrashRepository,
     private val pullApplier: PullApplier,
@@ -384,6 +385,23 @@ class SyncRepository(
         val url = settings.sheetUrl.first()
         require(url.isNotBlank()) { "Sheet URL not set" }
 
+        // BEFORE the metadata push, drain any bill images that never
+        // made it to Drive on their original capture. The first-attempt
+        // upload runs inside AddEditBillViewModel right after save, but
+        // that single attempt isn't enough: a transient network failure,
+        // a momentary Drive permission gap on a freshly redeployed Apps
+        // Script, or an app crash mid-upload all leave the row at
+        // imageFileIds="" while localImagePaths still points at a real
+        // file. Without this drain the badge sticks forever and the
+        // bill ends up "synced" on the server with no image attached.
+        //
+        // Retries are best-effort: any individual image failure is
+        // logged into lastSyncError and the bill row keeps pendingSync
+        // = true, so the next sync tries again. We do NOT abort the
+        // whole sync on an image-upload failure — the row metadata is
+        // still worth pushing.
+        runCatching { uploadMissingBillImages(billRepo.pendingSync()) }
+
         val items = itemRepo.pendingSync()
         val entries = purchaseRepo.pendingSync()
         val bills = billRepo.pendingSync()
@@ -533,6 +551,69 @@ class SyncRepository(
 
         crashRepo.clearUploaded(batch.map { it.crashId })
         batch.size
+    }
+
+    /**
+     * Walk the pending-bill list and, for any row whose local images
+     * have not been uploaded yet, re-run the Drive upload. Updates each
+     * row's `imageFileIds` CSV as soon as the upload succeeds.
+     *
+     * Failures are tolerated row-by-row — a single bill that can't
+     * upload (transient network, Drive permission gap) doesn't block
+     * the rest of the sync from making progress. The row stays at
+     * pendingSync = true, the next sync (or a manual refresh) retries.
+     *
+     * Why we re-fetch the row inside the loop: `updateImageState`
+     * touches the row's `pendingSync` and `updatedAt`, so the
+     * in-memory `pending` snapshot becomes stale once we update. The
+     * find-by-id reread guarantees we always merge against the latest
+     * persisted CSV state rather than an older view.
+     */
+    private suspend fun uploadMissingBillImages(pending: List<BillEntity>) {
+        if (pending.isEmpty()) return
+
+        // Soft-deleted rows don't need their images uploaded — their
+        // tombstone push doesn't reference image bytes at all, and
+        // the user has already asked for them to disappear.
+        val candidates = pending.filter { !it.deleted }
+
+        for (bill in candidates) {
+            val driveIds = bill.imageFileIds
+                .split(',')
+                .map { it.trim() }
+                .toMutableList()
+            val localPaths = bill.localImagePaths
+                .split(',')
+                .map { it.trim() }
+
+            var anyChange = false
+            for (index in localPaths.indices) {
+                val local = localPaths[index]
+                val drive = driveIds.getOrNull(index).orEmpty()
+                if (local.isBlank()) continue
+                if (drive.isNotBlank()) continue // already uploaded
+                val file = java.io.File(local)
+                if (!file.exists() || file.length() == 0L) continue
+
+                val result = billImageUploader.upload(bill.id, file)
+                if (result is AppResult.Ok) {
+                    // Make sure driveIds has a slot at this index.
+                    while (driveIds.size <= index) driveIds += ""
+                    driveIds[index] = result.value.fileId
+                    anyChange = true
+                }
+                // On Err we just leave the slot empty; the row stays
+                // pendingSync = true and gets retried next sync.
+            }
+
+            if (anyChange) {
+                billRepo.updateImageState(
+                    id = bill.id,
+                    imageFileIds = driveIds.joinToString(","),
+                    localImagePaths = bill.localImagePaths
+                )
+            }
+        }
     }
 
     /* ----------------------- entity -> DTO mappers --------------------- */

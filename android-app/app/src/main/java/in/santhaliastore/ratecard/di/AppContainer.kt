@@ -175,6 +175,7 @@ class AppContainer(private val context: Context) {
             purchaseRepo = purchaseRepo,
             billRepo = billRepo,
             billImageCache = billImageCache,
+            billImageUploader = billImageUploader,
             settings = settingsRepo,
             crashRepo = crashRepo,
             pullApplier = pullApplier,
