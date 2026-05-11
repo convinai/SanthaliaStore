@@ -18,7 +18,7 @@
     <!-- Home screen -->
     <string name="home_title">Santhalia Store</string>
     <string name="home_search_hint">Item code ya naam search karein</string>
-    <string name="home_fab_add_item">Item add karein</string>
+    <string name="home_fab_add_item">New</string>
     <string name="home_empty_title">Abhi koi item nahi hai</string>
     <string name="home_empty_caption">Pehla item add karein!</string>
     <string name="home_no_results">Koi item match nahi hua. Search badal kar dekhein.</string>
@@ -123,10 +123,14 @@
     <string name="home_tab_bills">Bills</string>
 
     <!-- Bills tab -->
-    <string name="home_fab_add_bill">Bill add karein</string>
+    <string name="home_fab_add_bill">New</string>
     <string name="bills_total_count_format">%1$d bills</string>
     <string name="bills_empty_title">Abhi koi bill nahi hai</string>
     <string name="bills_empty_caption">Supplier ki bill ki photo save karein — taarikh ke saath dhoondhna asaan hoga.</string>
+    <string name="bills_search_hint">Supplier ya notes search karein</string>
+    <string name="bills_no_results">Koi bill match nahi hua. Search badal kar dekhein.</string>
+    <string name="bills_date_count_format">%1$d bills</string>
+    <string name="bill_image_open_full_cd">Photo full screen mein dekhein</string>
     <string name="bills_no_supplier">Bina supplier ke</string>
     <string name="bills_thumb_cd">Bill ki photo</string>
     <string name="bills_thumb_placeholder_cd">Photo abhi nahi hai</string>

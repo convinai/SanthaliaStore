@@ -20,7 +20,13 @@
  * so comments are friendly and the logic is straightforward.
  */
 
-const SCHEMA_VERSION = 3;
+// Bump on additive backend-schema changes. v4 adds the derived
+// `imageLink` tail column to the Bills sheet — a clickable HYPERLINK
+// formula computed from `imageFileIds` so the shop owner can open a
+// bill photo straight from the Sheet without juggling Drive URLs.
+// The bump is informational only; the Android app ignores the new
+// column (wire contract is unchanged).
+const SCHEMA_VERSION = 4;
 
 // --- Sheet/tab names and headers (the source of truth for column order) ---
 const ITEMS_SHEET = 'Items';
@@ -49,6 +55,13 @@ const ENTRIES_HEADERS = [
 // optional total + free-text notes + a CSV of Drive file IDs (one per
 // attached image). Mirrors ENTRIES_HEADERS shape so the same in-memory
 // upsert / soft-delete helpers compose cleanly.
+// `imageLink` is a display-only derived column. It holds a Google
+// Sheets HYPERLINK formula computed from `imageFileIds` so the shop
+// owner can click a bill row and open the photo directly. It is NOT
+// part of the wire contract — clients neither read nor write it; we
+// (re)compute it server-side on every upsert. Kept as the trailing
+// column so the existing tail-append migration logic in
+// `loadSheetContext_` picks it up cleanly on first run.
 const BILLS_HEADERS = [
   'id',
   'date',
@@ -58,7 +71,8 @@ const BILLS_HEADERS = [
   'imageFileIds',
   'updatedAt',
   'deleted',
-  'serverUpdatedAt'
+  'serverUpdatedAt',
+  'imageLink'
 ];
 // Crash log columns — order MUST match the Android CrashEvent DTO
 // field order so the sheet stays readable even when columns are
@@ -868,6 +882,14 @@ function upsertBillInMemory_(ctx, payload, index) {
     const imageFileIds = String((payload && payload.imageFileIds) || '');
     const serverUpdatedAt = nowIso_();
 
+    // Derived clickable column. `setValues()` interprets a leading `=`
+    // as a formula on write, so we just drop the formula string into
+    // the row's `imageLink` slot via the normal buildRowFromHeaders_
+    // path — no separate setFormula call required. Recomputed on every
+    // upsert so a change to imageFileIds (image added or removed)
+    // propagates to the link without any extra plumbing.
+    const imageLink = buildBillImageLinkFormula_(imageFileIds);
+
     const existingRow = ctx.keyMap.get(id);
 
     const newRow = buildRowFromHeaders_(ctx.headers, {
@@ -879,7 +901,8 @@ function upsertBillInMemory_(ctx, payload, index) {
       imageFileIds: imageFileIds,
       updatedAt: updatedAt,
       deleted: 'FALSE',
-      serverUpdatedAt: serverUpdatedAt
+      serverUpdatedAt: serverUpdatedAt,
+      imageLink: imageLink
     });
 
     if (existingRow === undefined) {
@@ -1116,6 +1139,13 @@ function loadSheetContext_(sheetName, expectedHeaders) {
             ? toIsoTimestamp_(all[r][updatedAtIdx])
             : '';
           all[r][c.index] = existingUpdatedAt || nowIso_();
+        } else if (c.name === 'imageLink') {
+          // Backfill from the existing imageFileIds column (also
+          // detected by index lookup) so previously-uploaded bills
+          // become clickable without waiting for a re-upsert.
+          const fileIdsIdx = expectedHeaders.indexOf('imageFileIds');
+          const csv = (fileIdsIdx >= 0) ? toPlainText_(all[r][fileIdsIdx]) : '';
+          all[r][c.index] = buildBillImageLinkFormula_(csv);
         } else {
           all[r][c.index] = '';
         }
@@ -1184,6 +1214,26 @@ function loadSheetContext_(sheetName, expectedHeaders) {
     const row = all[r].slice(0, headers.length);
     while (row.length < headers.length) row.push('');
     values.push(row);
+  }
+
+  // Bills' `imageLink` is a derived HYPERLINK formula. `getValues()`
+  // returns the EVALUATED text of formula cells (e.g. "View image"),
+  // not the formula itself — so if we let those displayed strings
+  // round-trip through flushSheet_, the next setValues() call would
+  // overwrite the formula with plain text and the link would die.
+  // Recompute the formula from the row's `imageFileIds` cell on every
+  // load so the in-memory snapshot always carries a fresh formula.
+  // Cheap (string concat per row), idempotent, and self-healing — if
+  // a user manually clears the cell, the next sync restores it.
+  if (sheetName === BILLS_SHEET) {
+    const fileIdsIdx = colIndex.imageFileIds;
+    const linkIdx    = colIndex.imageLink;
+    if (typeof fileIdsIdx === 'number' && typeof linkIdx === 'number') {
+      for (let r = 0; r < values.length; r++) {
+        const csv = toPlainText_(values[r][fileIdsIdx]);
+        values[r][linkIdx] = buildBillImageLinkFormula_(csv);
+      }
+    }
   }
 
   // Build key -> rowIndex map. Key column is always the FIRST header.
@@ -1599,4 +1649,53 @@ function getOrCreateDeletedSubfolder_(parent) {
     if (!candidate.isTrashed()) return candidate;
   }
   return parent.createFolder(BILLS_DELETED_SUBNAME);
+}
+
+/**
+ * Build a Google Sheets HYPERLINK formula string for the Bills sheet's
+ * derived `imageLink` column from a CSV of Drive file IDs.
+ *
+ *   - 0 IDs   → '' (empty cell)
+ *   - 1 ID    → =HYPERLINK("https://drive.google.com/uc?id=<id>&export=view", "View image")
+ *   - N IDs   → =HYPERLINK(<first id's view URL>, "View (N images)")
+ *
+ * The link points at the FIRST image only because HYPERLINK supports
+ * exactly one URL per cell; the label tells the shop owner how many
+ * more images are attached so they know to open the bill in the app
+ * if they need the rest.
+ *
+ * Label is intentionally English ("View image" / "View (N images)")
+ * even though the rest of the app uses Hinglish. The Sheet UI shows
+ * the label on a single, narrow line and short English labels scan
+ * faster there than a transliterated Hinglish equivalent would.
+ *
+ * Defensive: any `"` inside an ID is escaped (Drive IDs are alpha-
+ * numeric + `-` + `_` in practice, but the formula breaks badly if a
+ * stray quote ever sneaks in, so the guard is cheap insurance).
+ *
+ * @param {string} imageFileIdsCsv  Raw CSV from the Bills sheet's
+ *                                  `imageFileIds` column.
+ * @return {string}                 Formula string starting with `=`,
+ *                                  or '' when there are no IDs.
+ */
+function buildBillImageLinkFormula_(imageFileIdsCsv) {
+  const raw = String(imageFileIdsCsv || '');
+  if (raw.length === 0) return '';
+
+  // Split, trim, drop empties. Same parsing the Android client uses.
+  const ids = [];
+  const parts = raw.split(',');
+  for (let i = 0; i < parts.length; i++) {
+    const t = String(parts[i] || '').trim();
+    if (t.length > 0) ids.push(t);
+  }
+  if (ids.length === 0) return '';
+
+  // Escape any embedded quotes so the formula stays well-formed.
+  // Apps Script HYPERLINK formulas use the standard `""` escape for
+  // a literal `"` inside a string argument.
+  const first = ids[0].replace(/"/g, '""');
+  const url = 'https://drive.google.com/uc?id=' + first + '&export=view';
+  const label = (ids.length === 1) ? 'View image' : ('View (' + ids.length + ' images)');
+  return '=HYPERLINK("' + url + '", "' + label + '")';
 }

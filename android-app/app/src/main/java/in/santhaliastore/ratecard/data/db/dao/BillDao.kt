@@ -73,6 +73,34 @@ interface BillDao {
     fun observeAll(): Flow<List<BillEntity>>
 
     /**
+     * Substring-match search over supplier + notes. The caller passes a
+     * pre-formed LIKE pattern (e.g. `%reliance%`) so the % wildcards
+     * stay out of the binding and we keep the DAO contract simple.
+     *
+     * SQL LIKE is sufficient here — bills are sparse (a few per week at
+     * most) so even a full-table scan finishes in microseconds. No FTS
+     * because the index cost wouldn't pay back at this volume.
+     *
+     * `pattern` is case-insensitive because Room maps LIKE to SQLite's
+     * NOCASE-by-default behaviour for ASCII. Devanagari / non-ASCII
+     * collation would need an explicit NOCASE collation; we accept the
+     * limitation because every kirana supplier in the user's contact
+     * list is named in Roman script in the app today.
+     */
+    @Query(
+        """
+        SELECT * FROM bills
+        WHERE deleted = 0
+          AND (
+            (supplier IS NOT NULL AND supplier LIKE :pattern) OR
+            (notes IS NOT NULL AND notes LIKE :pattern)
+          )
+        ORDER BY date DESC, updatedAt DESC
+        """
+    )
+    fun observeMatching(pattern: String): Flow<List<BillEntity>>
+
+    /**
      * Paged version of [observeAll]. Backs the Bills list screen. Page
      * size is configured smaller than the items list (see
      * BillRepository.PAGING_CONFIG) because each row renders a thumbnail

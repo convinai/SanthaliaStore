@@ -1,6 +1,8 @@
 package `in`.santhaliastore.ratecard.ui.screens.bills
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -104,7 +106,8 @@ fun BillDetailScreen(
     billId: String,
     onBack: () -> Unit,
     onEditBill: () -> Unit,
-    onDeleted: () -> Unit
+    onDeleted: () -> Unit,
+    onOpenImage: (pageIndex: Int) -> Unit
 ) {
     val owner = LocalViewModelStoreOwner.current!!
     val app = LocalContext.current.applicationContext as RateCardApp
@@ -209,6 +212,7 @@ fun BillDetailScreen(
                         imageFileIdsCsv = s.bill.imageFileIds
                     )
                 },
+                onOpenImage = onOpenImage,
                 modifier = Modifier.padding(padding)
             )
         }
@@ -235,6 +239,7 @@ private fun BillBody(
     bill: BillEntity,
     cache: BillImageCache,
     onLocalPathCached: (newLocalPathsCsv: String) -> Unit,
+    onOpenImage: (pageIndex: Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val driveIds = remember(bill.imageFileIds) {
@@ -259,7 +264,8 @@ private fun BillBody(
                     localPaths = localPaths,
                     driveIds = driveIds,
                     cache = cache,
-                    onLocalPathCached = onLocalPathCached
+                    onLocalPathCached = onLocalPathCached,
+                    onPageTap = onOpenImage
                 )
             } else {
                 NoImagePlaceholder()
@@ -287,7 +293,8 @@ private fun Carousel(
     localPaths: List<String>,
     driveIds: List<String>,
     cache: BillImageCache,
-    onLocalPathCached: (newLocalPathsCsv: String) -> Unit
+    onLocalPathCached: (newLocalPathsCsv: String) -> Unit,
+    onPageTap: (pageIndex: Int) -> Unit
 ) {
     val pagerState = rememberPagerState(pageCount = { pageCount })
 
@@ -303,6 +310,7 @@ private fun Carousel(
                 localPath = localPaths.getOrNull(page),
                 driveId = driveIds.getOrNull(page),
                 pageIndex = page,
+                onTap = { onPageTap(page) },
                 allLocalPaths = localPaths,
                 cache = cache,
                 onLocalPathCached = onLocalPathCached
@@ -366,6 +374,7 @@ private fun BillImagePage(
     localPath: String?,
     driveId: String?,
     pageIndex: Int,
+    onTap: () -> Unit,
     allLocalPaths: List<String>,
     cache: BillImageCache,
     onLocalPathCached: (newLocalPathsCsv: String) -> Unit
@@ -373,13 +382,22 @@ private fun BillImagePage(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    // Tap-on-image opens the full-screen pinch-zoom viewer. We apply
+    // the modifier on the outer Box surrounding each render path so
+    // both local-paint and Drive-paint cases are tappable identically.
+    val tapModifier = Modifier.pointerInput(onTap) {
+        detectTapGestures(onTap = { onTap() })
+    }
+
     when {
         !localPath.isNullOrBlank() -> {
             AsyncImage(
                 model = File(localPath),
-                contentDescription = stringResource(R.string.bills_thumb_cd),
+                contentDescription = stringResource(R.string.bill_image_open_full_cd),
                 contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(tapModifier)
             )
         }
 
@@ -400,9 +418,11 @@ private fun BillImagePage(
             if (rehydratedLocal != null) {
                 AsyncImage(
                     model = File(rehydratedLocal!!),
-                    contentDescription = stringResource(R.string.bills_thumb_cd),
+                    contentDescription = stringResource(R.string.bill_image_open_full_cd),
                     contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(tapModifier)
                 )
             } else {
                 SubcomposeAsyncImage(
@@ -412,7 +432,7 @@ private fun BillImagePage(
                         // is a simple file-system move from Coil's
                         // own cache rather than a second network hit.
                         .build(),
-                    contentDescription = stringResource(R.string.bills_thumb_cd),
+                    contentDescription = stringResource(R.string.bill_image_open_full_cd),
                     contentScale = ContentScale.Fit,
                     loading = {
                         Box(
@@ -469,7 +489,9 @@ private fun BillImagePage(
                             onLocalPathCached(newCsv)
                         }
                     },
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(tapModifier)
                 )
             }
         }

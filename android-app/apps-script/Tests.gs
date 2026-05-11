@@ -261,6 +261,45 @@ function test_bulkSync_billsArrayShape() {
   if (total !== 2) throw 'expected total=2 (1 bill + 1 deletedBill), got ' + total;
 }
 
+/**
+ * Empty CSV → empty cell (no formula). Keeps bills with zero images
+ * from cluttering the Sheet with dead "View image" links.
+ */
+function test_buildBillImageLinkFormula_empty() {
+  if (buildBillImageLinkFormula_('')        !== '') throw 'empty string should yield ""';
+  if (buildBillImageLinkFormula_(null)      !== '') throw 'null should yield ""';
+  if (buildBillImageLinkFormula_(undefined) !== '') throw 'undefined should yield ""';
+  // Pure-whitespace / pure-comma CSV degrades to empty too.
+  if (buildBillImageLinkFormula_('   ')     !== '') throw 'whitespace should yield ""';
+  if (buildBillImageLinkFormula_(',,')      !== '') throw 'commas-only should yield ""';
+}
+
+/**
+ * Single ID → a HYPERLINK formula pointing at the Drive view URL for
+ * that ID with the short "View image" label.
+ */
+function test_buildBillImageLinkFormula_singleImage() {
+  const f = buildBillImageLinkFormula_('abc');
+  if (f.indexOf('=HYPERLINK') !== 0)         throw 'formula should start with =HYPERLINK, got: ' + f;
+  if (f.indexOf('id=abc')      < 0)          throw 'formula should contain id=abc, got: ' + f;
+  if (f.indexOf('export=view') < 0)          throw 'formula should contain export=view, got: ' + f;
+  if (f.indexOf('"View image"') < 0)         throw 'single-image label should be "View image", got: ' + f;
+  // Should NOT include the multi-image suffix.
+  if (f.indexOf('images)') >= 0)             throw 'single-image formula should not have plural label, got: ' + f;
+}
+
+/**
+ * Multiple IDs → link points at the FIRST ID only (HYPERLINK is one
+ * URL per cell), label tells the user there are more.
+ */
+function test_buildBillImageLinkFormula_multiImage() {
+  const f = buildBillImageLinkFormula_('abc,def,ghi');
+  if (f.indexOf('=HYPERLINK') !== 0)         throw 'formula should start with =HYPERLINK, got: ' + f;
+  if (f.indexOf('id=abc') < 0)               throw 'link must point at first id (abc), got: ' + f;
+  if (f.indexOf('id=def') >= 0)              throw 'link must NOT include the second id, got: ' + f;
+  if (f.indexOf('(3 images)') < 0)           throw 'multi-image label should count 3 images, got: ' + f;
+}
+
 function runAllTests_() {
   const tests = [
     test_toIsoTimestamp_handlesDate,
@@ -274,7 +313,10 @@ function runAllTests_() {
     test_upsertBillInMemory_appendsNewBill,
     test_upsertBillInMemory_nullTotalAmountRoundTripsAsNull,
     test_upsertBillInMemory_lastWriteWins,
-    test_bulkSync_billsArrayShape
+    test_bulkSync_billsArrayShape,
+    test_buildBillImageLinkFormula_empty,
+    test_buildBillImageLinkFormula_singleImage,
+    test_buildBillImageLinkFormula_multiImage
   ];
   let pass = 0, fail = 0;
   tests.forEach(function (t) {

@@ -31,6 +31,25 @@ class BillRepository(
 
     fun observeAll(): Flow<List<BillEntity>> = dao.observeAll()
 
+    /**
+     * Search-filtered observable. Empty / blank query returns the full
+     * stream (callers shouldn't have to special-case an unset query).
+     * The raw input is wrapped in `%…%` and sanitised so a user typing
+     * `%` or `_` doesn't accidentally invoke SQL wildcards.
+     */
+    fun searchBills(rawQuery: String): Flow<List<BillEntity>> {
+        val trimmed = rawQuery.trim()
+        if (trimmed.isEmpty()) return dao.observeAll()
+        // Escape LIKE meta-chars so they're treated as literals. SQLite
+        // requires the escape char to be declared via `ESCAPE`, which
+        // our DAO query doesn't do — so we instead strip them entirely.
+        // It's a kirana shop's supplier names; we will never legitimately
+        // search for "_" or "%".
+        val safe = trimmed.replace("%", "").replace("_", "")
+        if (safe.isEmpty()) return dao.observeAll()
+        return dao.observeMatching("%$safe%")
+    }
+
     fun observePendingCount(): Flow<Int> = dao.observePendingCount()
 
     fun observeActiveCount(): Flow<Int> = dao.observeActiveCount()

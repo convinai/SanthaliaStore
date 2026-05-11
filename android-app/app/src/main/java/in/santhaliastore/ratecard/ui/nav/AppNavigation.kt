@@ -11,6 +11,7 @@ import `in`.santhaliastore.ratecard.ui.screens.add_entry.AddEditEntryScreen
 import `in`.santhaliastore.ratecard.ui.screens.add_item.AddEditItemScreen
 import `in`.santhaliastore.ratecard.ui.screens.bills.AddEditBillScreen
 import `in`.santhaliastore.ratecard.ui.screens.bills.BillDetailScreen
+import `in`.santhaliastore.ratecard.ui.screens.bills.BillImageViewerScreen
 import `in`.santhaliastore.ratecard.ui.screens.home.HomeScreen
 import `in`.santhaliastore.ratecard.ui.screens.item_detail.ItemDetailScreen
 import `in`.santhaliastore.ratecard.ui.screens.settings.SettingsScreen
@@ -63,6 +64,16 @@ object Routes {
     const val BillDetailPattern = "bill/{$BILL_DETAIL_ID_ARG}"
     fun billDetail(id: String) = "bill/${encode(id)}"
     fun billDetailArg() = BILL_DETAIL_ID_ARG
+
+    // Full-screen pinch-zoom viewer over a bill's images. Two args:
+    // the bill id and the page index to open at. Index passed as an
+    // int so the destination doesn't have to parse strings.
+    private const val BILL_IMAGE_ID_ARG = "billId"
+    private const val BILL_IMAGE_PAGE_ARG = "page"
+    const val BillImageViewerPattern = "bill/{$BILL_IMAGE_ID_ARG}/image/{$BILL_IMAGE_PAGE_ARG}"
+    fun billImageViewer(id: String, page: Int) = "bill/${encode(id)}/image/$page"
+    fun billImageViewerIdArg() = BILL_IMAGE_ID_ARG
+    fun billImageViewerPageArg() = BILL_IMAGE_PAGE_ARG
 
     /**
      * Item codes are typed by the user and may contain unusual
@@ -246,7 +257,28 @@ fun AppNavigation(
                 billId = id,
                 onBack = { navController.popBackStack() },
                 onEditBill = { navController.navigate(Routes.editBill(id)) },
-                onDeleted = { navController.popBackStack() }
+                onDeleted = { navController.popBackStack() },
+                onOpenImage = { page ->
+                    navController.navigate(Routes.billImageViewer(id, page))
+                }
+            )
+        }
+
+        composable(
+            route = Routes.BillImageViewerPattern,
+            arguments = listOf(
+                navArgument(Routes.billImageViewerIdArg()) { type = NavType.StringType },
+                navArgument(Routes.billImageViewerPageArg()) { type = NavType.IntType }
+            )
+        ) { backStackEntry ->
+            val id = backStackEntry.arguments?.getString(Routes.billImageViewerIdArg())
+                ?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+                .orEmpty()
+            val page = backStackEntry.arguments?.getInt(Routes.billImageViewerPageArg()) ?: 0
+            BillImageViewerScreen(
+                billId = id,
+                initialPage = page,
+                onBack = { navController.popBackStack() }
             )
         }
 
