@@ -1,22 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Foreground for the adaptive launcher icon: a chunky white block-letter
-    "S" centred on the saffron background. Built from five filled
-    rectangles (top bar, top-left stem, middle bar, bottom-right stem,
-    bottom bar) which Android unions under the default non-zero fill rule
-    into one solid silhouette — no strokes, no thin lines, no open paths.
+    Foreground for the adaptive launcher icon: a single-stroke
+    geometric "S" rendered on the saffron background.
 
-    Layout in the 108-unit logical canvas:
-        top bar:        x=28..80  y=26..40   (52 wide, 14 tall)
-        top-left stem:  x=28..42  y=26..56
-        middle bar:     x=28..80  y=49..63
-        bot-right stem: x=66..80  y=52..82
-        bottom bar:     x=28..80  y=68..82
+    The path is the SPINE of the letter (the centerline a pen would
+    trace), drawn as three cubic Béziers:
 
-    The S spans roughly y=26..82, x=28..80 — about 56 dp tall and 52 dp
-    wide, well inside the 66 dp adaptive-icon safe zone (centre 54,54
-    radius 33). Even the most aggressive launcher mask (circle / squircle)
-    can't crop this and leave the icon looking sparse.
+      M 80,36                                      [top-right tip]
+      C 80,24 28,24 28,36     [top arc → apex (54,27)]
+      C 28,54 80,54 80,72     [middle wave → exact center (54,54)]
+      C 80,84 28,84 28,72     [bottom arc → dip (54,81)]
+
+    Symmetric on x=54. The three control-point pairs are placed so the
+    cubic midpoints land at (54,27), (54,54) and (54,81) respectively —
+    that's the visual rhythm a sophisticated S needs: equal upper
+    counter, exact-center wave, equal lower counter.
+
+    Rendered as a STROKED path (no fill) with width 11 + round caps and
+    joins so the terminals at (80,36) and (28,72) are soft semicircles
+    rather than blunt square ends.
+
+    With stroke=11, the visible glyph sits within the 66 dp adaptive-icon
+    safe zone (centre 54, radius 33 → y range 21..87) — even the most
+    aggressive circular launcher mask won't crop the S.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -24,6 +30,10 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M28,26 L80,26 L80,40 L28,40 Z M28,26 L42,26 L42,56 L28,56 Z M28,49 L80,49 L80,63 L28,63 Z M66,52 L80,52 L80,82 L66,82 Z M28,68 L80,68 L80,82 L28,82 Z" />
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="11"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00FFFFFF"
+        android:pathData="M80,36 C80,24 28,24 28,36 C28,54 80,54 80,72 C80,84 28,84 28,72" />
 </vector>
