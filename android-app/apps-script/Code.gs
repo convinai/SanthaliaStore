@@ -1595,6 +1595,47 @@ const BILLS_FOLDER_PROP      = 'bills_folder_id';   // ScriptProperties cache ke
 const BILLS_DELETED_SUBNAME  = '_deleted';
 
 /**
+ * ONE-OFF SETUP — RUN THIS FROM THE APPS SCRIPT EDITOR.
+ *
+ * 1. Open this script in the Apps Script editor.
+ * 2. In the function dropdown at the top of the toolbar, pick
+ *    `setupBillsDriveFolder`.
+ * 3. Click the ▶ Run button.
+ * 4. On first run Google shows a permission prompt: "This app
+ *    wants access to your Google Drive". Tap Continue → choose
+ *    your Google account → Allow.
+ * 5. After it finishes, open the Execution log (View → Logs, or
+ *    the bottom panel that pops up). You should see the folder
+ *    URL — that's your bills bucket.
+ *
+ * What this does:
+ *   - Forces the Drive OAuth prompt, which is the usual reason
+ *     uploads silently fail right after a redeploy. The deployment
+ *     uses the script owner's scopes, and they have to be granted
+ *     once for the new DriveApp calls in this file.
+ *   - Creates the "SanthaliaStore Bills" folder in your My Drive
+ *     if it doesn't already exist, so the first phone upload
+ *     doesn't race with the folder-create step.
+ *
+ * Re-running this is harmless and idempotent — the folder is
+ * looked up by id (cached in ScriptProperties) before any create
+ * attempt, and no duplicates are produced.
+ */
+function setupBillsDriveFolder() {
+  const folder = getOrCreateBillsFolder_();
+  const url = folder.getUrl();
+  const id = folder.getId();
+  Logger.log('Bills folder created / found.');
+  Logger.log('  Name: ' + folder.getName());
+  Logger.log('  ID:   ' + id);
+  Logger.log('  URL:  ' + url);
+  // Returning the URL makes the value pop up in the editor's
+  // run-result toast so the user gets a visible confirmation
+  // even before they open the log panel.
+  return url;
+}
+
+/**
  * Get (or create on first use) the Drive Folder that holds all bill
  * images. We cache the resolved folder ID in ScriptProperties so we
  * don't scan My Drive on every uploadBillImage call — DriveApp folder
