@@ -16,8 +16,8 @@ android {
         // Bumped from 1 / "1.0.0" to invalidate launcher icon caches on
         // MIUI / One UI / themed-icon launchers that key the cached icon
         // by package + versionCode + signature.
-        versionCode = 11
-        versionName = "1.0.10"
+        versionCode = 12
+        versionName = "1.1.0"
 
         // Vector drawables — supportLibrary lets older devices render them too.
         vectorDrawables {
@@ -182,6 +182,10 @@ dependencies {
     // DataStore
     implementation(libs.androidx.datastore.preferences)
 
+    // ExifInterface — bill image compressor baking camera orientation
+    // metadata into the pixel buffer.
+    implementation(libs.androidx.exifinterface)
+
     // WorkManager
     implementation(libs.androidx.work.runtime.ktx)
 
@@ -196,6 +200,14 @@ dependencies {
     // Coroutines
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
+
+    // Coil — image loading for bill thumbnails and the detail carousel.
+    // Default memory cache size is a percentage of available heap, which
+    // is fine for our 2 GB-RAM target: compressed bill JPEGs are ~500 KB,
+    // and the paged list (20 visible at a time) keeps the working set
+    // well under any cache cap Coil would impose. No custom ImageLoader
+    // needed.
+    implementation(libs.coil.compose)
 
     // Debug / tooling
     debugImplementation(libs.androidx.compose.ui.tooling)

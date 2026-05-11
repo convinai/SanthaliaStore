@@ -2,13 +2,16 @@ package `in`.santhaliastore.ratecard.sync
 
 import androidx.room.withTransaction
 import `in`.santhaliastore.ratecard.data.db.AppDatabase
+import `in`.santhaliastore.ratecard.data.db.entity.BillEntity
 import `in`.santhaliastore.ratecard.data.db.entity.ItemEntity
 import `in`.santhaliastore.ratecard.data.db.entity.PurchaseEntryEntity
 import `in`.santhaliastore.ratecard.data.prefs.SettingsRepository
+import `in`.santhaliastore.ratecard.data.repo.BillRepository
 import `in`.santhaliastore.ratecard.data.repo.CrashRepository
 import `in`.santhaliastore.ratecard.data.repo.ItemRepository
 import `in`.santhaliastore.ratecard.data.repo.PurchaseRepository
 import `in`.santhaliastore.ratecard.util.AppResult
+import `in`.santhaliastore.ratecard.util.BillImageCache
 import `in`.santhaliastore.ratecard.util.appResultOf
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -57,6 +60,8 @@ class SyncRepository(
     private val database: AppDatabase,
     private val itemRepo: ItemRepository,
     private val purchaseRepo: PurchaseRepository,
+    private val billRepo: BillRepository,
+    private val billImageCache: BillImageCache,
     private val settings: SettingsRepository,
     private val crashRepo: CrashRepository,
     private val pullApplier: PullApplier,
@@ -194,7 +199,8 @@ class SyncRepository(
             SyncOutcome(
                 pushedRows = pushedRows,
                 pulledItems = pullOutcome.itemsApplied,
-                pulledEntries = pullOutcome.entriesApplied
+                pulledEntries = pullOutcome.entriesApplied,
+                pulledBills = pullOutcome.billsApplied
             )
         )
     }
@@ -241,8 +247,9 @@ class SyncRepository(
     }
 
     /**
-     * Destructive recovery path — wipes every local item / entry row,
-     * resets the pull cursor, then runs a full sync against the sheet.
+     * Destructive recovery path — wipes every local item / entry /
+     * bill row, resets the pull cursor, then runs a full sync against
+     * the sheet.
      *
      * Use case: the user manually cleared rows on the sheet (or some
      * other out-of-band edit) and expects the phone to mirror that.
@@ -286,6 +293,10 @@ class SyncRepository(
                 // its dependents inside the transaction window.
                 purchaseRepo.deleteAll()
                 itemRepo.deleteAll()
+                // Bills have no FK to items/entries so they can wipe
+                // in any order — we tack them on after the FK pair so
+                // the order-sensitive deletes stay grouped at the top.
+                billRepo.deleteAll()
                 // Empty cursor → server returns the full dataset on
                 // the next pull. Inside the transaction so a crash
                 // between the wipe and the cursor reset doesn't leave
@@ -296,6 +307,14 @@ class SyncRepository(
             // is starting fresh and shouldn't see an old error string
             // alongside a brand-new sync result.
             settings.setLastSyncError(null)
+            // Drop every cached bill image from app-private storage.
+            // The Room wipe removed the bill rows that pointed at them,
+            // so the JPEGs would otherwise sit on disk as orphans until
+            // the next BillImageCache.cleanOrphans call. Outside the
+            // Room transaction because file IO has its own failure
+            // domain — a delete failure shouldn't roll back the DB wipe
+            // the user explicitly asked for.
+            billImageCache.clearAll()
         }
         if (wipeResult is AppResult.Err) {
             // Local wipe failed (rare — IO error inside Room). Surface
@@ -367,7 +386,8 @@ class SyncRepository(
 
         val items = itemRepo.pendingSync()
         val entries = purchaseRepo.pendingSync()
-        if (items.isEmpty() && entries.isEmpty()) {
+        val bills = billRepo.pendingSync()
+        if (items.isEmpty() && entries.isEmpty() && bills.isEmpty()) {
             // Nothing data-shaped to push, but we may still have
             // unsent crashes — ride the existing connectivity check
             // and try to drain them. Failure is swallowed so the
@@ -380,6 +400,8 @@ class SyncRepository(
         val pendingItemDeletes = items.filter { it.deleted }
         val pendingEntryUpserts = entries.filter { !it.deleted }
         val pendingEntryDeletes = entries.filter { it.deleted }
+        val pendingBillUpserts = bills.filter { !it.deleted }
+        val pendingBillDeletes = bills.filter { it.deleted }
 
         // Build flat lists of pre-serialised payloads. We chunk them
         // together so that a single batch can carry any mix of changes.
@@ -387,22 +409,28 @@ class SyncRepository(
         val itemDeleteDtos = pendingItemDeletes.map { it.toDelete() }
         val entryUpsertDtos = pendingEntryUpserts.map { it.toUpsert() }
         val entryDeleteDtos = pendingEntryDeletes.map { it.toDelete() }
+        val billUpsertDtos = pendingBillUpserts.map { it.toUpsert() }
+        val billDeleteDtos = pendingBillDeletes.map { it.toDelete() }
 
         val totalChanges = itemUpsertDtos.size + itemDeleteDtos.size +
-                entryUpsertDtos.size + entryDeleteDtos.size
+                entryUpsertDtos.size + entryDeleteDtos.size +
+                billUpsertDtos.size + billDeleteDtos.size
 
         var processed = 0
         val syncedItemCodes = mutableListOf<String>()
         val syncedEntryIds = mutableListOf<String>()
+        val syncedBillIds = mutableListOf<String>()
 
         // We greedily fill batches in this order: item upserts, item
-        // deletes, entry upserts, entry deletes. Within a batch we
-        // never split a single bucket across calls — keeps server-side
-        // error reporting cleaner.
+        // deletes, entry upserts, entry deletes, bill upserts, bill
+        // deletes. Within a batch we never split a single bucket
+        // across calls — keeps server-side error reporting cleaner.
         val itemUpsertIter = itemUpsertDtos.iterator()
         val itemDeleteIter = itemDeleteDtos.iterator()
         val entryUpsertIter = entryUpsertDtos.iterator()
         val entryDeleteIter = entryDeleteDtos.iterator()
+        val billUpsertIter = billUpsertDtos.iterator()
+        val billDeleteIter = billDeleteDtos.iterator()
 
         var remaining = totalChanges
         while (remaining > 0) {
@@ -410,6 +438,8 @@ class SyncRepository(
             val deletedItemsBatch = mutableListOf<DeleteItemPayload>()
             val entriesBatch = mutableListOf<UpsertEntryPayload>()
             val deletedEntriesBatch = mutableListOf<DeleteEntryPayload>()
+            val billsBatch = mutableListOf<UpsertBillPayload>()
+            val deletedBillsBatch = mutableListOf<DeleteBillPayload>()
 
             var room = MAX_BATCH_SIZE
 
@@ -417,12 +447,16 @@ class SyncRepository(
             while (room > 0 && itemDeleteIter.hasNext()) { deletedItemsBatch += itemDeleteIter.next(); room-- }
             while (room > 0 && entryUpsertIter.hasNext()) { entriesBatch += entryUpsertIter.next(); room-- }
             while (room > 0 && entryDeleteIter.hasNext()) { deletedEntriesBatch += entryDeleteIter.next(); room-- }
+            while (room > 0 && billUpsertIter.hasNext()) { billsBatch += billUpsertIter.next(); room-- }
+            while (room > 0 && billDeleteIter.hasNext()) { deletedBillsBatch += billDeleteIter.next(); room-- }
 
             val payload = BulkSyncPayload(
                 items = itemsBatch,
                 entries = entriesBatch,
                 deletedItems = deletedItemsBatch,
-                deletedEntries = deletedEntriesBatch
+                deletedEntries = deletedEntriesBatch,
+                bills = billsBatch,
+                deletedBills = deletedBillsBatch
             )
 
             val body = AppsScriptApi.envelope("bulkSync", payload)
@@ -441,13 +475,17 @@ class SyncRepository(
             syncedItemCodes += deletedItemsBatch.map { it.code }
             syncedEntryIds += entriesBatch.map { it.entryId }
             syncedEntryIds += deletedEntriesBatch.map { it.entryId }
+            syncedBillIds += billsBatch.map { it.id }
+            syncedBillIds += deletedBillsBatch.map { it.id }
 
             remaining -= itemsBatch.size + deletedItemsBatch.size +
-                    entriesBatch.size + deletedEntriesBatch.size
+                    entriesBatch.size + deletedEntriesBatch.size +
+                    billsBatch.size + deletedBillsBatch.size
         }
 
         if (syncedItemCodes.isNotEmpty()) itemRepo.clearPendingSync(syncedItemCodes)
         if (syncedEntryIds.isNotEmpty()) purchaseRepo.clearPendingSync(syncedEntryIds)
+        if (syncedBillIds.isNotEmpty()) billRepo.clearPendingSync(syncedBillIds)
 
         // Crashes ride along on the same successful-sync trigger but
         // are pushed as a separate request so a crash-upload failure
@@ -526,15 +564,38 @@ class SyncRepository(
         entryId = entryId,
         updatedAt = updatedAt
     )
+
+    private fun BillEntity.toUpsert() = UpsertBillPayload(
+        id = id,
+        date = date,
+        supplier = supplier,
+        totalAmount = totalAmount,
+        notes = notes,
+        // imageFileIds is CSV-on-the-wire; the entity stores it as the
+        // same shape so this is a pure pass-through. `localImagePaths`
+        // is intentionally NOT included — it's per-device cache state.
+        imageFileIds = imageFileIds,
+        updatedAt = updatedAt
+    )
+
+    private fun BillEntity.toDelete() = DeleteBillPayload(
+        id = id,
+        updatedAt = updatedAt
+    )
 }
 
 /**
  * Aggregate counts surfaced by [SyncRepository.runFullSyncNow] so the
- * UI can show "Push N, pulled M items + K entries" in a single
- * snackbar without poking at the repository again.
+ * UI can show "Push N, pulled M items + K entries + L bills" in a
+ * single snackbar without poking at the repository again.
+ *
+ * `pulledBills` defaults to 0 so call sites that constructed this
+ * before the bills feature shipped (tests in particular) keep
+ * compiling without a code change.
  */
 data class SyncOutcome(
     val pushedRows: Int,
     val pulledItems: Int,
-    val pulledEntries: Int
+    val pulledEntries: Int,
+    val pulledBills: Int = 0
 )

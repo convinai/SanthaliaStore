@@ -1,87 +1,96 @@
 package `in`.santhaliastore.ratecard.ui.screens.home
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.paging.compose.collectAsLazyPagingItems
-import androidx.paging.compose.itemContentType
-import androidx.paging.compose.itemKey
 import `in`.santhaliastore.ratecard.R
-import `in`.santhaliastore.ratecard.data.db.entity.ItemWithLastEntry
-import `in`.santhaliastore.ratecard.ui.components.EmptyState
-import `in`.santhaliastore.ratecard.ui.components.SearchField
+import `in`.santhaliastore.ratecard.ui.screens.bills.BillsTab
 import `in`.santhaliastore.ratecard.ui.screens.home.HomeViewModel.UiEvent
-import `in`.santhaliastore.ratecard.util.Money
-import `in`.santhaliastore.ratecard.util.Time
 
+/**
+ * Two bottom-nav tabs hosted under a shared TopAppBar / FAB / snackbar.
+ *
+ * **Items** (default) — the rate card list, search, status row. Owned
+ * by [ItemsTab] which reads from the shared [HomeViewModel] passed in
+ * via the local `viewModel(...)` resolution.
+ *
+ * **Bills** — supplier-bill photos with metadata. Currently a
+ * placeholder ([BillsTab]) until the data layer + capture flow land.
+ *
+ * The two tabs share:
+ *   - TopAppBar (logo, refresh, settings) — sync is a global action,
+ *     it doesn't make sense to duplicate the refresh button per tab.
+ *   - Snackbar host — sync outcome events are global.
+ *   - FAB — same slot, but the icon and label swap based on the
+ *     selected tab (Add item / Add bill). The callback dispatches to
+ *     the appropriate route via [AppNavigation].
+ *
+ * Tab state survives configuration changes via `rememberSaveable` but
+ * deliberately resets on a fresh process — landing on Items is the
+ * expected first-thing-you-see for a shop owner opening the app.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     onItemClick: (String) -> Unit,
     onAddItem: () -> Unit,
+    onAddBill: () -> Unit,
+    onBillClick: (String) -> Unit,
     onOpenSettings: () -> Unit,
     viewModel: HomeViewModel = viewModel(factory = HomeViewModel.Factory)
 ) {
-    val query by viewModel.query.collectAsStateWithLifecycle()
-    val totalCount by viewModel.totalCount.collectAsStateWithLifecycle()
     val syncing by viewModel.syncing.collectAsStateWithLifecycle()
-    val lastSyncedAt by viewModel.lastSyncedAt.collectAsStateWithLifecycle()
-    val items = viewModel.pagedItems.collectAsLazyPagingItems()
-    val listState = rememberLazyListState()
-
     val snackbarHostState = remember { SnackbarHostState() }
+    var selectedTab by rememberSaveable { mutableStateOf(HomeTab.Items) }
 
-    // Resolve the Hinglish snackbar copy here (not in the VM) so every
-    // user-visible string stays in res/values/strings.xml. Mirrors the
-    // pattern used in SettingsScreen so both screens speak the same
+    // Back from a non-Items tab returns to Items rather than exiting
+    // the app — matches the pattern users expect from WhatsApp,
+    // Instagram, etc. Only intercept when we're not already on Items.
+    BackHandler(enabled = selectedTab != HomeTab.Items) {
+        selectedTab = HomeTab.Items
+    }
+
+    // Resolve the Hinglish snackbar copy at the composable layer so all
+    // user-visible strings stay in res/values/strings.xml. Mirrors the
+    // pattern from SettingsScreen so both screens speak the same
     // language for the same outcome.
     val snackSyncDoneNoRows = stringResource(R.string.sync_done_no_rows)
     val snackSyncDoneWithRowsFormat = stringResource(R.string.sync_done_with_rows_format)
@@ -93,7 +102,7 @@ fun HomeScreen(
         viewModel.events.collect { event ->
             val text = when (event) {
                 is UiEvent.SyncSuccess -> {
-                    val pulled = event.pulledItems + event.pulledEntries
+                    val pulled = event.pulledItems + event.pulledEntries + event.pulledBills
                     when {
                         event.pushed == 0 && pulled == 0 -> snackSyncDoneNoRows
                         event.pushed > 0 && pulled == 0 ->
@@ -113,42 +122,10 @@ fun HomeScreen(
         }
     }
 
-    // Pre-resolve the "never synced" / in-progress / format copy so the
-    // derived state below can stay pure (no Composable calls inside the
-    // lambda). The in-progress label is the same string the SyncStatus
-    // chip uses elsewhere — keeping a single resource means we only
-    // translate one piece of copy when we add a new locale.
-    val neverSyncedLabel = stringResource(R.string.home_never_synced)
-    val lastSyncFormat = stringResource(R.string.home_last_sync_format)
-    val syncInProgressLabel = stringResource(R.string.sync_status_in_progress)
-
-    // Format the absolute-time string off the timestamp — but flip to
-    // the in-progress label whenever a sync (auto or manual) is
-    // running. `derivedStateOf` keeps the recomposition scoped to just
-    // the status line — the rest of Home doesn't re-render when the
-    // value flips.
-    //
-    // We use absolute format ("5 May 2026 2:30 PM") rather than
-    // relative ("5 min pehle") because two phone owners comparing
-    // notes care about WHEN the data was fresh, not how long ago
-    // that was — a relative label silently changes meaning the
-    // moment they walk away from the screen.
-    val lastSyncLine by remember(lastSyncedAt, syncing) {
-        derivedStateOf {
-            when {
-                syncing -> syncInProgressLabel
-                lastSyncedAt <= 0L -> neverSyncedLabel
-                else -> lastSyncFormat.format(Time.displayDateTime(lastSyncedAt))
-            }
-        }
-    }
-
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    // Use the actual shop sign as the title — strong brand
-                    // anchor on every visit to home.
                     Image(
                         painter = painterResource(R.drawable.santha_logo),
                         contentDescription = stringResource(R.string.app_logo_cd),
@@ -163,23 +140,14 @@ fun HomeScreen(
                     titleContentColor = MaterialTheme.colorScheme.onBackground
                 ),
                 actions = {
-                    // Explicit refresh button. While syncing we swap the
-                    // icon for a spinner of the same size so the slot
-                    // stays exactly 48 dp wide — no layout shift in the
-                    // app bar between idle and in-progress states.
-                    //
-                    // The IconButton itself is kept (rather than just a
-                    // Box around the spinner) so the tap target stays
-                    // 48 dp; we just disable it while a sync is running
-                    // to prevent re-entrant taps.
+                    // Same refresh / spinner / settings slot the original
+                    // HomeScreen had. 48 dp tap target preserved by keeping
+                    // the IconButton wrapper around the spinner.
                     IconButton(
                         onClick = { viewModel.syncNow() },
                         enabled = !syncing
                     ) {
                         if (syncing) {
-                            // 24 dp matches Material's default Icon size,
-                            // so the spinner occupies the same visual slot
-                            // as Icons.Filled.Refresh.
                             CircularProgressIndicator(
                                 modifier = Modifier.size(24.dp),
                                 strokeWidth = 2.dp,
@@ -198,235 +166,75 @@ fun HomeScreen(
                 }
             )
         },
+        bottomBar = {
+            NavigationBar {
+                NavigationBarItem(
+                    selected = selectedTab == HomeTab.Items,
+                    onClick = { selectedTab = HomeTab.Items },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ListAlt,
+                            contentDescription = null
+                        )
+                    },
+                    label = { Text(stringResource(R.string.home_tab_items)) }
+                )
+                NavigationBarItem(
+                    selected = selectedTab == HomeTab.Bills,
+                    onClick = { selectedTab = HomeTab.Bills },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Filled.ReceiptLong,
+                            contentDescription = null
+                        )
+                    },
+                    label = { Text(stringResource(R.string.home_tab_bills)) }
+                )
+            }
+        },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = onAddItem,
-                icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                text = { Text(stringResource(R.string.home_fab_add_item)) }
-            )
+            // FAB label + action swap with the current tab. The icon is
+            // always a generic plus — the label and route do the talking.
+            when (selectedTab) {
+                HomeTab.Items -> ExtendedFloatingActionButton(
+                    onClick = onAddItem,
+                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                    text = { Text(stringResource(R.string.home_fab_add_item)) }
+                )
+                HomeTab.Bills -> ExtendedFloatingActionButton(
+                    onClick = onAddBill,
+                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                    text = { Text(stringResource(R.string.home_fab_add_bill)) }
+                )
+            }
         }
     ) { padding ->
-        Column(
-            Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
-            // Sticky search bar
-            Surface(
-                tonalElevation = 0.dp,
-                color = MaterialTheme.colorScheme.background
-            ) {
-                SearchField(
-                    value = query,
-                    onValueChange = viewModel::onQueryChange,
-                    placeholder = stringResource(R.string.home_search_hint)
-                )
-            }
-
-            // Status bar under the search field. Two muted lines on a
-            // single row: total active items count on the left, last
-            // sync on the right. The split layout pairs each line with
-            // the affordance it relates to — count grows with adds (the
-            // FAB), sync grows with the refresh button in the top bar.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, end = 16.dp, top = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = stringResource(R.string.home_total_items_format, totalCount),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1
-                )
-                Text(
-                    text = lastSyncLine,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1
-                )
-            }
-
-            val isInitialLoading = items.loadState.refresh is androidx.paging.LoadState.Loading
-            val isEmpty = items.itemCount == 0 && !isInitialLoading
-
-            when {
-                isEmpty && query.isBlank() && totalCount == 0 -> {
-                    EmptyState(
-                        title = stringResource(R.string.home_empty_title),
-                        caption = stringResource(R.string.home_empty_caption),
-                        actionLabel = stringResource(R.string.home_fab_add_item),
-                        onAction = onAddItem
-                    )
-                }
-
-                isEmpty && query.isNotBlank() -> {
-                    EmptyState(
-                        title = stringResource(R.string.home_no_results),
-                        caption = ""
-                    )
-                }
-
-                else -> {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                            horizontal = 12.dp,
-                            vertical = 8.dp
-                        ),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(
-                            count = items.itemCount,
-                            key = items.itemKey { it.code },
-                            contentType = items.itemContentType { "ItemRow" }
-                        ) { index ->
-                            val row = items[index] ?: return@items
-                            ItemRow(
-                                row = row,
-                                lastUpdateText = row.lastDate?.let { Time.displayDate(it) }.orEmpty(),
-                                onClick = { onItemClick(row.code) }
-                            )
-                        }
-                        // Bottom spacer so the FAB doesn't sit on the last row
-                        item { Spacer(Modifier.height(96.dp)) }
-                    }
-                }
-            }
+        // We pass the Scaffold's padding INTO each tab rather than
+        // applying it here so each tab body can decide its own scroll /
+        // edge behaviour (e.g. a future Bills list might pin a date
+        // header bar against the top inset).
+        when (selectedTab) {
+            HomeTab.Items -> ItemsTab(
+                viewModel = viewModel,
+                onItemClick = onItemClick,
+                onAddItem = onAddItem,
+                contentPadding = padding,
+                modifier = Modifier.fillMaxSize()
+            )
+            HomeTab.Bills -> BillsTab(
+                onAddBill = onAddBill,
+                onBillClick = onBillClick,
+                contentPadding = padding,
+                modifier = Modifier.fillMaxSize()
+            )
         }
     }
 }
 
 /**
- * Item row — primary identity (code chip + name) on the left,
- * trailing meta (price + date) on the right of a single visual row.
- *
- *   [ATA]  Aata 5kg                   ₹240 / Kg
- *                                     4 May 2026
- *
- * Layout follows the standard Material list-item anatomy: leading
- * supporting visual + headline take a flexible width, trailing
- * supporting text aligns to the end. The date sits as a secondary
- * caption directly under the price so the eye groups them together.
+ * Two bottom-nav destinations. Kept as a local enum (not Routes) since
+ * the swap is in-place via state — no NavController push, so we never
+ * need to serialise the value into a route string.
  */
-@Composable
-private fun ItemRow(
-    row: ItemWithLastEntry,
-    lastUpdateText: String,
-    onClick: () -> Unit
-) {
-    Card(
-        onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-            contentColor = MaterialTheme.colorScheme.onSurface
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // Leading: code chip + bold name. Takes whatever width is
-            // left after the trailing column claims its intrinsic size.
-            Row(
-                modifier = Modifier.weight(1f),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                CodeChip(row.code)
-                Text(
-                    text = row.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 2,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                )
-            }
-
-            // Trailing: price + date stacked, end-aligned. Fixed width
-            // (not widthIn-max) so the rate column starts at the same
-            // x-position on every row — the list reads as a clean grid
-            // instead of jittering with each row's content length.
-            // Children clamp themselves to maxLines=1 + ellipsis so a
-            // long unit ("Packets") doesn't break the column.
-            Column(
-                horizontalAlignment = Alignment.End,
-                modifier = Modifier.width(120.dp)
-            ) {
-                if (row.lastPrice != null) {
-                    val rateText = if (!row.unit.isNullOrBlank()) {
-                        stringResource(R.string.last_rate_format, Money.plain(row.lastPrice), row.unit)
-                    } else {
-                        stringResource(R.string.last_rate_no_unit_format, Money.plain(row.lastPrice))
-                    }
-                    Text(
-                        text = rateText,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                    )
-                    if (lastUpdateText.isNotEmpty()) {
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            text = lastUpdateText,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                        )
-                    }
-                } else {
-                    Text(
-                        text = stringResource(R.string.home_no_purchase_caption),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CodeChip(code: String) {
-    Box(
-        Modifier
-            // Fixed width — about 8 monospace characters at labelMedium.
-            // Anchors the row's leading edge so the name always begins
-            // at the same x-position regardless of the code's length.
-            // Long codes ellipsis; short codes sit centered in the chip.
-            .width(80.dp)
-            .background(
-                color = MaterialTheme.colorScheme.primaryContainer,
-                shape = RoundedCornerShape(6.dp)
-            )
-            .padding(horizontal = 8.dp, vertical = 3.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = code,
-            style = MaterialTheme.typography.labelMedium.copy(
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.SemiBold
-            ),
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
-            maxLines = 1,
-            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-        )
-    }
-}
+private enum class HomeTab { Items, Bills }

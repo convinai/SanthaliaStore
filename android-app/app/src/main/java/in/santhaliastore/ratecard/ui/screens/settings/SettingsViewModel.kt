@@ -7,6 +7,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import `in`.santhaliastore.ratecard.RateCardApp
 import `in`.santhaliastore.ratecard.data.prefs.SettingsRepository
+import `in`.santhaliastore.ratecard.data.repo.BillRepository
 import `in`.santhaliastore.ratecard.data.repo.ItemRepository
 import `in`.santhaliastore.ratecard.data.repo.PurchaseRepository
 import `in`.santhaliastore.ratecard.sync.SyncRepository
@@ -25,7 +26,8 @@ class SettingsViewModel(
     private val settingsRepo: SettingsRepository,
     private val syncRepo: SyncRepository,
     itemRepo: ItemRepository,
-    purchaseRepo: PurchaseRepository
+    purchaseRepo: PurchaseRepository,
+    billRepo: BillRepository
 ) : ViewModel() {
 
     data class Snapshot(
@@ -75,8 +77,9 @@ class SettingsViewModel(
 
     private val pendingCountFlow = combine(
         itemRepo.observePendingCount(),
-        purchaseRepo.observePendingCount()
-    ) { items, entries -> items + entries }
+        purchaseRepo.observePendingCount(),
+        billRepo.observePendingCount()
+    ) { items, entries, bills -> items + entries + bills }
 
     /** One-shot UI events (snackbars). Buffered so we never drop one. */
     private val _events = Channel<UiEvent>(Channel.BUFFERED)
@@ -93,10 +96,15 @@ class SettingsViewModel(
      * server told us about that we applied locally.
      */
     sealed interface UiEvent {
+        // `pulledBills` is defaulted so existing snackbar consumers that
+        // pre-date Bills keep compiling — they ignore the field and
+        // count only items + entries; sites that care about bills add
+        // the field into their sum.
         data class SyncSuccess(
             val pushed: Int,
             val pulledItems: Int,
-            val pulledEntries: Int
+            val pulledEntries: Int,
+            val pulledBills: Int = 0
         ) : UiEvent
         data class SyncFailure(val message: String) : UiEvent
 
@@ -107,7 +115,8 @@ class SettingsViewModel(
          */
         data class ResetSuccess(
             val itemsApplied: Int,
-            val entriesApplied: Int
+            val entriesApplied: Int,
+            val billsApplied: Int = 0
         ) : UiEvent
 
         /**
@@ -194,7 +203,8 @@ class SettingsViewModel(
                 is AppResult.Ok -> UiEvent.SyncSuccess(
                     pushed = result.value.pushedRows,
                     pulledItems = result.value.pulledItems,
-                    pulledEntries = result.value.pulledEntries
+                    pulledEntries = result.value.pulledEntries,
+                    pulledBills = result.value.pulledBills
                 )
                 is AppResult.Err -> UiEvent.SyncFailure(result.message)
             }
@@ -232,7 +242,8 @@ class SettingsViewModel(
             val event = when (result) {
                 is AppResult.Ok -> UiEvent.ResetSuccess(
                     itemsApplied = result.value.pulledItems,
-                    entriesApplied = result.value.pulledEntries
+                    entriesApplied = result.value.pulledEntries,
+                    billsApplied = result.value.pulledBills
                 )
                 is AppResult.Err -> UiEvent.ResetFailure(result.message)
             }
@@ -268,7 +279,8 @@ class SettingsViewModel(
                     settingsRepo = app.container.settingsRepo,
                     syncRepo = app.container.syncRepo,
                     itemRepo = app.container.itemRepo,
-                    purchaseRepo = app.container.purchaseRepo
+                    purchaseRepo = app.container.purchaseRepo,
+                    billRepo = app.container.billRepo
                 )
             }
         }

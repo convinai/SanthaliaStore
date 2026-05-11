@@ -6,8 +6,10 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import `in`.santhaliastore.ratecard.data.db.dao.BillDao
 import `in`.santhaliastore.ratecard.data.db.dao.ItemDao
 import `in`.santhaliastore.ratecard.data.db.dao.PurchaseEntryDao
+import `in`.santhaliastore.ratecard.data.db.entity.BillEntity
 import `in`.santhaliastore.ratecard.data.db.entity.ItemEntity
 import `in`.santhaliastore.ratecard.data.db.entity.ItemFts
 import `in`.santhaliastore.ratecard.data.db.entity.PurchaseEntryEntity
@@ -31,15 +33,17 @@ import `in`.santhaliastore.ratecard.data.db.entity.PurchaseEntryEntity
     entities = [
         ItemEntity::class,
         PurchaseEntryEntity::class,
-        ItemFts::class
+        ItemFts::class,
+        BillEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun itemDao(): ItemDao
     abstract fun purchaseEntryDao(): PurchaseEntryDao
+    abstract fun billDao(): BillDao
 
     companion object {
         const val DB_NAME = "ratecard.db"
@@ -102,6 +106,44 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v2 → v3: introduce the `bills` table for supplier bills.
+         *
+         * New feature, brand-new table — no existing data to coerce or
+         * copy. We just create the table + the date index Room would
+         * have generated from the [BillEntity] declaration, so the
+         * schema validator passes on first boot after the upgrade.
+         *
+         * Column types and NOT NULL flags MUST match Room's expected
+         * `CREATE TABLE` statement byte-for-byte (Room hashes the schema
+         * at compile time and compares at runtime). The non-null
+         * defaults on `imageFileIds` / `localImagePaths` mirror the
+         * Kotlin defaults on the entity so a v2-era client that
+         * upgrades after running `bulkSync` (which can pull bills via
+         * the v3 server) never sees a null in those columns.
+         */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS bills (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        date TEXT NOT NULL,
+                        supplier TEXT,
+                        totalAmount REAL,
+                        notes TEXT,
+                        imageFileIds TEXT NOT NULL DEFAULT '',
+                        localImagePaths TEXT NOT NULL DEFAULT '',
+                        updatedAt TEXT NOT NULL,
+                        deleted INTEGER NOT NULL DEFAULT 0,
+                        pendingSync INTEGER NOT NULL DEFAULT 1
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_bills_date ON bills(date)")
+            }
+        }
+
         fun build(context: Context): AppDatabase = Room
             .databaseBuilder(
                 context.applicationContext,
@@ -110,7 +152,7 @@ abstract class AppDatabase : RoomDatabase() {
             )
             // WAL is on by default — leaving the explicit setter out so we
             // pick up Room's recommended journal mode for the platform.
-            .addMigrations(MIGRATION_1_2)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
             .fallbackToDestructiveMigrationOnDowngrade()
             .build()
     }

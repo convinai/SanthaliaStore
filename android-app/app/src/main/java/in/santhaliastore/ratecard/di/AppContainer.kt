@@ -4,12 +4,16 @@ import android.content.Context
 import `in`.santhaliastore.ratecard.BuildConfig
 import `in`.santhaliastore.ratecard.data.db.AppDatabase
 import `in`.santhaliastore.ratecard.data.prefs.SettingsRepository
+import `in`.santhaliastore.ratecard.data.repo.BillRepository
 import `in`.santhaliastore.ratecard.data.repo.CrashRepository
 import `in`.santhaliastore.ratecard.data.repo.ItemRepository
 import `in`.santhaliastore.ratecard.data.repo.PurchaseRepository
 import `in`.santhaliastore.ratecard.sync.AppsScriptApi
+import `in`.santhaliastore.ratecard.sync.BillImageUploader
 import `in`.santhaliastore.ratecard.sync.PullApplier
 import `in`.santhaliastore.ratecard.sync.SyncRepository
+import `in`.santhaliastore.ratecard.util.BillImageCache
+import `in`.santhaliastore.ratecard.util.BillImageCompressor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -114,6 +118,10 @@ class AppContainer(private val context: Context) {
         PurchaseRepository(database.purchaseEntryDao(), notifyChange)
     }
 
+    val billRepo: BillRepository by lazy {
+        BillRepository(database.billDao(), notifyChange)
+    }
+
     /**
      * On-disk crash queue. Constructed eagerly enough to be available
      * from the uncaught-exception handler installed in
@@ -135,8 +143,29 @@ class AppContainer(private val context: Context) {
         PullApplier(
             database = database,
             itemDao = database.itemDao(),
-            entryDao = database.purchaseEntryDao()
+            entryDao = database.purchaseEntryDao(),
+            billDao = database.billDao()
         )
+    }
+
+    /**
+     * Bill image pipeline. All three are lazy so the camera / Drive
+     * machinery isn't constructed on launch — only when the user
+     * first opens the Bills screen.
+     *
+     * [billImageCache] is also passed into [SyncRepository] so the
+     * destructive "Reset local data" recovery flow can drop every
+     * cached JPEG alongside the Room wipe — otherwise the on-disk
+     * cache would orphan past its rows.
+     */
+    val billImageCache: BillImageCache by lazy { BillImageCache(context) }
+
+    val billImageCompressor: BillImageCompressor by lazy {
+        BillImageCompressor(context, billImageCache)
+    }
+
+    val billImageUploader: BillImageUploader by lazy {
+        BillImageUploader(apiFactory = apiFactory, settings = settingsRepo)
     }
 
     val syncRepo: SyncRepository by lazy {
@@ -144,6 +173,8 @@ class AppContainer(private val context: Context) {
             database = database,
             itemRepo = itemRepo,
             purchaseRepo = purchaseRepo,
+            billRepo = billRepo,
+            billImageCache = billImageCache,
             settings = settingsRepo,
             crashRepo = crashRepo,
             pullApplier = pullApplier,

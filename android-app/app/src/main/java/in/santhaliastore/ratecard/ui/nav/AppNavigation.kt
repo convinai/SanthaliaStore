@@ -9,6 +9,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import `in`.santhaliastore.ratecard.ui.screens.add_entry.AddEditEntryScreen
 import `in`.santhaliastore.ratecard.ui.screens.add_item.AddEditItemScreen
+import `in`.santhaliastore.ratecard.ui.screens.bills.AddEditBillScreen
+import `in`.santhaliastore.ratecard.ui.screens.bills.BillDetailScreen
 import `in`.santhaliastore.ratecard.ui.screens.home.HomeScreen
 import `in`.santhaliastore.ratecard.ui.screens.item_detail.ItemDetailScreen
 import `in`.santhaliastore.ratecard.ui.screens.settings.SettingsScreen
@@ -44,6 +46,24 @@ object Routes {
     fun editEntry(entryId: String) = "entries/edit/${encode(entryId)}"
     fun editEntryArg() = EDIT_ENTRY_ID_ARG
 
+    // ----- Bills -----------------------------------------------------
+    //
+    // Bills use UUIDs (filename-safe by construction) but we still
+    // run them through encode() for consistency with the items
+    // routes — a future change to id shape never has to revisit the
+    // navigation contract.
+    const val AddBill = "bills/add"
+
+    private const val EDIT_BILL_ID_ARG = "billId"
+    const val EditBillPattern = "bills/edit/{$EDIT_BILL_ID_ARG}"
+    fun editBill(id: String) = "bills/edit/${encode(id)}"
+    fun editBillArg() = EDIT_BILL_ID_ARG
+
+    private const val BILL_DETAIL_ID_ARG = "billId"
+    const val BillDetailPattern = "bill/{$BILL_DETAIL_ID_ARG}"
+    fun billDetail(id: String) = "bill/${encode(id)}"
+    fun billDetailArg() = BILL_DETAIL_ID_ARG
+
     /**
      * Item codes are typed by the user and may contain unusual
      * characters. We URL-encode before stuffing them into a path so
@@ -65,6 +85,8 @@ fun AppNavigation(
             HomeScreen(
                 onItemClick = { code -> navController.navigate(Routes.itemDetail(code)) },
                 onAddItem = { navController.navigate(Routes.AddItem) },
+                onAddBill = { navController.navigate(Routes.AddBill) },
+                onBillClick = { id -> navController.navigate(Routes.billDetail(id)) },
                 onOpenSettings = { navController.navigate(Routes.Settings) }
             )
         }
@@ -170,6 +192,61 @@ fun AppNavigation(
                 editingEntryId = entryId,
                 onDone = { navController.popBackStack() },
                 onBack = { navController.popBackStack() }
+            )
+        }
+
+        // ----- Bills -------------------------------------------------
+        //
+        // Three routes mirror the Items shape:
+        //   - AddBill: create flow, no arg.
+        //   - EditBill: edit flow with a bill id arg.
+        //   - BillDetail: read-only view with edit/delete actions.
+        //
+        // The add and edit screens both pop on save. The detail
+        // screen pops on delete. Edit goes a step further: after a
+        // save it pops twice (back past the stale detail) so a
+        // back-press from wherever the user lands next doesn't drop
+        // them onto a now-stale detail view rendered with the old
+        // pre-save row.
+        composable(Routes.AddBill) {
+            AddEditBillScreen(
+                editingBillId = null,
+                onSaved = { _ -> navController.popBackStack() },
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = Routes.EditBillPattern,
+            arguments = listOf(navArgument(Routes.editBillArg()) { type = NavType.StringType })
+        ) { backStackEntry ->
+            val id = backStackEntry.arguments?.getString(Routes.editBillArg())
+                ?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+                .orEmpty()
+            AddEditBillScreen(
+                editingBillId = id,
+                // After an edit we want to drop the user back on the
+                // detail screen (which re-observes the row reactively
+                // and will repaint with the new fields). popBackStack
+                // pops just this edit screen; the detail screen
+                // beneath is still on the stack.
+                onSaved = { _ -> navController.popBackStack() },
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = Routes.BillDetailPattern,
+            arguments = listOf(navArgument(Routes.billDetailArg()) { type = NavType.StringType })
+        ) { backStackEntry ->
+            val id = backStackEntry.arguments?.getString(Routes.billDetailArg())
+                ?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+                .orEmpty()
+            BillDetailScreen(
+                billId = id,
+                onBack = { navController.popBackStack() },
+                onEditBill = { navController.navigate(Routes.editBill(id)) },
+                onDeleted = { navController.popBackStack() }
             )
         }
 

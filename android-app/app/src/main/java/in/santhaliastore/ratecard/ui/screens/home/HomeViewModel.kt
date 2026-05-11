@@ -117,10 +117,14 @@ class HomeViewModel(
      * message for the same outcome.
      */
     sealed interface UiEvent {
+        // `pulledBills` defaulted so the existing HomeScreen snackbar
+        // mapping (which sums items + entries) keeps compiling. The
+        // mapping is updated to add `pulledBills` separately.
         data class SyncSuccess(
             val pushed: Int,
             val pulledItems: Int,
-            val pulledEntries: Int
+            val pulledEntries: Int,
+            val pulledBills: Int = 0
         ) : UiEvent
         data class SyncFailure(val message: String) : UiEvent
     }
@@ -154,7 +158,8 @@ class HomeViewModel(
                 is AppResult.Ok -> UiEvent.SyncSuccess(
                     pushed = result.value.pushedRows,
                     pulledItems = result.value.pulledItems,
-                    pulledEntries = result.value.pulledEntries
+                    pulledEntries = result.value.pulledEntries,
+                    pulledBills = result.value.pulledBills
                 )
                 is AppResult.Err -> UiEvent.SyncFailure(result.message)
             }

@@ -5,9 +5,10 @@
  * "Santhalia Rate Card" Android app. The Android app stores all
  * data locally (SQLite/Room) and periodically POSTs changes here.
  *
- * Three tabs are auto-created in the bound spreadsheet:
+ * Four tabs are auto-created in the bound spreadsheet:
  *   - Items            (rate card items)
  *   - PurchaseEntries  (price history per item, per date)
+ *   - Bills            (purchase invoices with optional Drive image attachments)
  *   - Crashes          (uncaught-exception reports from the phone)
  *
  * Sync model:
@@ -19,11 +20,12 @@
  * so comments are friendly and the logic is straightforward.
  */
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 // --- Sheet/tab names and headers (the source of truth for column order) ---
 const ITEMS_SHEET = 'Items';
 const ENTRIES_SHEET = 'PurchaseEntries';
+const BILLS_SHEET = 'Bills';
 const CRASHES_SHEET = 'Crashes';
 
 // `serverUpdatedAt` is the bidirectional-sync cursor column. The server
@@ -39,6 +41,21 @@ const ENTRIES_HEADERS = [
   'quantity',
   'supplier',
   'notes',
+  'updatedAt',
+  'deleted',
+  'serverUpdatedAt'
+];
+// Bills carry a purchase invoice — header date + optional supplier +
+// optional total + free-text notes + a CSV of Drive file IDs (one per
+// attached image). Mirrors ENTRIES_HEADERS shape so the same in-memory
+// upsert / soft-delete helpers compose cleanly.
+const BILLS_HEADERS = [
+  'id',
+  'date',
+  'supplier',
+  'totalAmount',
+  'notes',
+  'imageFileIds',
   'updatedAt',
   'deleted',
   'serverUpdatedAt'
@@ -89,7 +106,12 @@ const TEXT_FORMAT_COLS = {
   // `quantity` is free-form (e.g. "5 kg", "1 packet") so we keep it
   // plain-text too. Without this, a value like "1.5" would be coerced
   // into a number on the way back, breaking the String|null contract.
-  PurchaseEntries: ['date', 'quantity', 'updatedAt', 'serverUpdatedAt']
+  PurchaseEntries: ['date', 'quantity', 'updatedAt', 'serverUpdatedAt'],
+  // `imageFileIds` is intentionally NOT pinned to `@` — it's a CSV of
+  // opaque Drive UUIDs, none of which look date- or number-shaped, so
+  // there's nothing for Sheets to silently coerce. `totalAmount` is a
+  // real number column and must stay coercible.
+  Bills:           ['date', 'updatedAt', 'serverUpdatedAt']
 };
 
 
@@ -136,14 +158,18 @@ function doPost(e) {
 
   try {
     switch (action) {
-      case 'health':       return handleHealth_();
-      case 'upsertItem':   return handleUpsertItem_(payload);
-      case 'deleteItem':   return handleDeleteItem_(payload);
-      case 'upsertEntry':  return handleUpsertEntry_(payload);
-      case 'deleteEntry':  return handleDeleteEntry_(payload);
-      case 'bulkSync':     return handleBulkSync_(payload);
-      case 'pullChanges':  return handlePullChanges_(payload);
-      case 'logCrashes':   return handleLogCrashes_(payload);
+      case 'health':           return handleHealth_();
+      case 'upsertItem':       return handleUpsertItem_(payload);
+      case 'deleteItem':       return handleDeleteItem_(payload);
+      case 'upsertEntry':      return handleUpsertEntry_(payload);
+      case 'deleteEntry':      return handleDeleteEntry_(payload);
+      case 'upsertBill':       return handleUpsertBill_(payload);
+      case 'deleteBill':       return handleDeleteBill_(payload);
+      case 'uploadBillImage':  return handleUploadBillImage_(payload);
+      case 'deleteBillImage':  return handleDeleteBillImage_(payload);
+      case 'bulkSync':         return handleBulkSync_(payload);
+      case 'pullChanges':      return handlePullChanges_(payload);
+      case 'logCrashes':       return handleLogCrashes_(payload);
       default:
         return jsonResponse_({
           ok: false,
@@ -276,12 +302,180 @@ function handleDeleteEntry_(payload) {
   });
 }
 
+function handleUpsertBill_(payload) {
+  const errors = [];
+  let processed = 0;
+
+  withLock_(function () {
+    const ctx = loadSheetContext_(BILLS_SHEET, BILLS_HEADERS);
+    const result = upsertBillInMemory_(ctx, payload, 0);
+    if (result.error) {
+      errors.push(result.error);
+    } else {
+      processed = 1;
+    }
+    flushSheet_(ctx);
+  });
+
+  return jsonResponse_({
+    ok: errors.length === 0,
+    action: 'upsertBill',
+    processed: processed,
+    errors: errors.length ? errors : undefined,
+    time: new Date().toISOString()
+  });
+}
+
+function handleDeleteBill_(payload) {
+  const errors = [];
+  let processed = 0;
+
+  withLock_(function () {
+    const ctx = loadSheetContext_(BILLS_SHEET, BILLS_HEADERS);
+    const result = softDeleteInMemory_(ctx, 'id', payload, 0);
+    if (result.error) {
+      errors.push(result.error);
+    } else {
+      processed = 1;
+    }
+    flushSheet_(ctx);
+  });
+
+  return jsonResponse_({
+    ok: errors.length === 0,
+    action: 'deleteBill',
+    processed: processed,
+    errors: errors.length ? errors : undefined,
+    time: new Date().toISOString()
+  });
+}
+
+/**
+ * Upload one bill image to Drive. Payload:
+ *   { billId, fileName, mimeType, dataBase64 }
+ *
+ * The phone holds bill metadata in SQLite and uploads each image as a
+ * separate Drive file — the Bills row only stores a CSV of file IDs so
+ * we don't blow the per-row size budget on base64 blobs. Files live in
+ * "SanthaliaStore Bills" in My Drive (auto-created on first use).
+ *
+ * Response shape is intentionally NOT the standard SyncResponse — the
+ * phone needs the Drive file ID + a viewable URL back in the same call
+ * so it can update its local row without a follow-up roundtrip:
+ *   { ok, fileId, viewUrl, time }
+ * Errors still come back as { ok:false, errors:[...], time } so the
+ * client can use the same error-decoding path.
+ */
+function handleUploadBillImage_(payload) {
+  try {
+    const billId     = requireString_(payload && payload.billId,     'billId');
+    const fileName   = requireString_(payload && payload.fileName,   'fileName');
+    const mimeType   = requireString_(payload && payload.mimeType,   'mimeType');
+    const dataBase64 = requireString_(payload && payload.dataBase64, 'dataBase64');
+
+    // Derive a sensible extension. We prefer the suffix the phone sent
+    // (it picked the right one when reading from the gallery / camera),
+    // but fall back to the mime type so we never end up with no suffix.
+    const dot = fileName.lastIndexOf('.');
+    let ext = (dot > 0 && dot < fileName.length - 1) ? fileName.substring(dot + 1) : '';
+    if (!ext) {
+      // crude mime → ext fallback; only the image types the phone sends.
+      if      (mimeType === 'image/jpeg') ext = 'jpg';
+      else if (mimeType === 'image/png')  ext = 'png';
+      else if (mimeType === 'image/webp') ext = 'webp';
+      else                                ext = 'bin';
+    }
+
+    // Filename pattern locks each image to its bill and makes the
+    // Drive folder sortable by upload time without needing metadata.
+    const stamp = nowIso_().replace(/[:.]/g, '-');
+    const safeBillId = billId.replace(/[^A-Za-z0-9._-]/g, '_');
+    const driveName = safeBillId + '_' + stamp + '.' + ext;
+
+    const folder = getOrCreateBillsFolder_();
+    const blob = Utilities.newBlob(Utilities.base64Decode(dataBase64), mimeType, driveName);
+    const file = folder.createFile(blob);
+
+    const fileId = file.getId();
+    // `uc?export=view` is the documented direct-view URL for an image
+    // in Drive. The phone uses it as the <img src> after pulling.
+    const viewUrl = 'https://drive.google.com/uc?id=' + fileId + '&export=view';
+
+    return jsonResponse_({
+      ok: true,
+      action: 'uploadBillImage',
+      fileId: fileId,
+      viewUrl: viewUrl,
+      time: nowIso_()
+    });
+  } catch (err) {
+    return jsonResponse_({
+      ok: false,
+      action: 'uploadBillImage',
+      processed: 0,
+      errors: [{ index: 0, key: (payload && payload.billId) ? String(payload.billId) : '', message: err && err.message ? err.message : String(err) }],
+      time: new Date().toISOString()
+    });
+  }
+}
+
+/**
+ * Move a bill image to the `_deleted/` recovery sub-folder. Payload:
+ *   { fileId }
+ *
+ * Idempotent: if the file is already gone (phone retrying after a
+ * dropped response, say) we return ok=true with processed=0 so the
+ * client treats the delete as successful and stops retrying.
+ */
+function handleDeleteBillImage_(payload) {
+  try {
+    const fileId = requireString_(payload && payload.fileId, 'fileId');
+
+    let file = null;
+    try {
+      file = DriveApp.getFileById(fileId);
+    } catch (lookupErr) {
+      // DriveApp throws on missing / inaccessible IDs. Treat as already-deleted.
+      return jsonResponse_({
+        ok: true,
+        action: 'deleteBillImage',
+        processed: 0,
+        time: new Date().toISOString()
+      });
+    }
+
+    // We don't actually delete — moving to `_deleted/` keeps the file
+    // recoverable if the user later realises they wanted that photo.
+    // The shop owner can rescue images via Drive UI without our help.
+    const parent = getOrCreateBillsFolder_();
+    const deletedFolder = getOrCreateDeletedSubfolder_(parent);
+    file.moveTo(deletedFolder);
+
+    return jsonResponse_({
+      ok: true,
+      action: 'deleteBillImage',
+      processed: 1,
+      time: new Date().toISOString()
+    });
+  } catch (err) {
+    return jsonResponse_({
+      ok: false,
+      action: 'deleteBillImage',
+      processed: 0,
+      errors: [{ index: 0, key: (payload && payload.fileId) ? String(payload.fileId) : '', message: err && err.message ? err.message : String(err) }],
+      time: new Date().toISOString()
+    });
+  }
+}
+
 /**
  * Bulk sync. Accepts up to BULK_LIMIT total changes split across:
  *   payload.items          — items to upsert
  *   payload.entries        — entries to upsert
+ *   payload.bills          — bills to upsert
  *   payload.deletedItems   — items to soft-delete (by code)
  *   payload.deletedEntries — entries to soft-delete (by entryId)
+ *   payload.deletedBills   — bills to soft-delete (by id)
  *
  * We process every row inside a try/catch so one bad row does not
  * poison the whole batch. The response lists per-row errors with
@@ -290,10 +484,13 @@ function handleDeleteEntry_(payload) {
 function handleBulkSync_(payload) {
   const items          = Array.isArray(payload.items)          ? payload.items          : [];
   const entries        = Array.isArray(payload.entries)        ? payload.entries        : [];
+  const bills          = Array.isArray(payload.bills)          ? payload.bills          : [];
   const deletedItems   = Array.isArray(payload.deletedItems)   ? payload.deletedItems   : [];
   const deletedEntries = Array.isArray(payload.deletedEntries) ? payload.deletedEntries : [];
+  const deletedBills   = Array.isArray(payload.deletedBills)   ? payload.deletedBills   : [];
 
-  const total = items.length + entries.length + deletedItems.length + deletedEntries.length;
+  const total = items.length + entries.length + bills.length
+              + deletedItems.length + deletedEntries.length + deletedBills.length;
 
   if (total > BULK_LIMIT) {
     return jsonResponse_({
@@ -316,6 +513,7 @@ function handleBulkSync_(payload) {
     // Load each sheet only once, mutate in memory, write once at the end.
     const itemsCtx   = loadSheetContext_(ITEMS_SHEET, ITEMS_HEADERS);
     const entriesCtx = loadSheetContext_(ENTRIES_SHEET, ENTRIES_HEADERS);
+    const billsCtx   = loadSheetContext_(BILLS_SHEET, BILLS_HEADERS);
 
     // 1) Item upserts
     for (let i = 0; i < items.length; i++) {
@@ -346,9 +544,24 @@ function handleBulkSync_(payload) {
       if (r.error) errors.push(r.error); else processed++;
     }
 
+    // 5) Bill upserts
+    const billsUpsertBase = items.length + deletedItems.length + entries.length + deletedEntries.length;
+    for (let i = 0; i < bills.length; i++) {
+      const r = upsertBillInMemory_(billsCtx, bills[i], billsUpsertBase + i);
+      if (r.error) errors.push(r.error); else processed++;
+    }
+
+    // 6) Bill deletes
+    const billsDeleteBase = billsUpsertBase + bills.length;
+    for (let i = 0; i < deletedBills.length; i++) {
+      const r = softDeleteInMemory_(billsCtx, 'id', deletedBills[i], billsDeleteBase + i);
+      if (r.error) errors.push(r.error); else processed++;
+    }
+
     // Single batched write per sheet — much faster than row-by-row.
     flushSheet_(itemsCtx);
     flushSheet_(entriesCtx);
+    flushSheet_(billsCtx);
   });
 
   return jsonResponse_({
@@ -402,10 +615,11 @@ function handlePullChanges_(payload) {
     : '';
   const cursor = parseCursor_(rawCursor); // '' means "send everything"
 
-  let itemsCtx, entriesCtx;
+  let itemsCtx, entriesCtx, billsCtx;
   withLock_(function () {
     itemsCtx   = loadSheetContext_(ITEMS_SHEET, ITEMS_HEADERS);
     entriesCtx = loadSheetContext_(ENTRIES_SHEET, ENTRIES_HEADERS);
+    billsCtx   = loadSheetContext_(BILLS_SHEET, BILLS_HEADERS);
   });
 
   // Filter / sort / project happen OUTSIDE the lock — they only touch
@@ -418,20 +632,23 @@ function handlePullChanges_(payload) {
   // would be re-evaluated on every subsequent pull.
   const itemsResult   = collectChangedRows_(itemsCtx,   ITEMS_HEADERS,   cursor, PULL_LIMIT, rowToItemDto_);
   const entriesResult = collectChangedRows_(entriesCtx, ENTRIES_HEADERS, cursor, PULL_LIMIT, rowToEntryDto_);
+  const billsResult   = collectChangedRows_(billsCtx,   BILLS_HEADERS,   cursor, PULL_LIMIT, rowToBillDto_);
 
-  // New cursor = max serverUpdatedAt seen across BOTH sheets, including
+  // New cursor = max serverUpdatedAt seen across ALL sheets, including
   // tombstone rows that were filtered out of the response. If nothing
   // changed at all we hand the client back the cursor it sent us —
   // never null — so it can keep polling without re-loading everything.
   let newCursor = cursor || '';
   if (itemsResult.maxServerUpdatedAt   > newCursor) newCursor = itemsResult.maxServerUpdatedAt;
   if (entriesResult.maxServerUpdatedAt > newCursor) newCursor = entriesResult.maxServerUpdatedAt;
+  if (billsResult.maxServerUpdatedAt   > newCursor) newCursor = billsResult.maxServerUpdatedAt;
 
   return jsonResponse_({
     ok: true,
     action: 'pullChanges',
     items: itemsResult.dtos,
     entries: entriesResult.dtos,
+    bills: billsResult.dtos,
     cursor: newCursor,
     schemaVersion: SCHEMA_VERSION,
     time: nowIso_()
@@ -619,12 +836,86 @@ function upsertEntryInMemory_(ctx, payload, index) {
 }
 
 /**
+ * Upsert a bill by `id`. Last-write-wins on updatedAt.
+ *
+ * `totalAmount` is optional — the user may save a bill before they've
+ * tallied the final number. Empty / null payload values go to the sheet
+ * as '' (not 0!) so a "no amount yet" bill round-trips as `null` and
+ * does not get confused with a genuine zero-rupee bill on the way back.
+ * `supplier`, `notes`, `imageFileIds` are free-text strings (empty if
+ * absent). `imageFileIds` is a CSV of Drive file IDs the phone built
+ * up via uploadBillImage; we never parse it server-side, just
+ * preserve it verbatim.
+ */
+function upsertBillInMemory_(ctx, payload, index) {
+  try {
+    const id        = requireString_(payload && payload.id,        'id');
+    const date      = requireString_(payload && payload.date,      'date');
+    const updatedAt = requireString_(payload && payload.updatedAt, 'updatedAt');
+
+    // Nullable total. Treat '', null, undefined identically as "no amount
+    // entered yet" — store as empty string so rowToBillDto_ emits null.
+    const rawTotal = payload && payload.totalAmount;
+    let totalAmount = '';
+    if (rawTotal !== undefined && rawTotal !== null && rawTotal !== '') {
+      const n = Number(rawTotal);
+      if (isNaN(n)) throw new Error('Field is not a number: totalAmount');
+      totalAmount = n;
+    }
+
+    const supplier     = String((payload && payload.supplier)     || '');
+    const notes        = String((payload && payload.notes)        || '');
+    const imageFileIds = String((payload && payload.imageFileIds) || '');
+    const serverUpdatedAt = nowIso_();
+
+    const existingRow = ctx.keyMap.get(id);
+
+    const newRow = buildRowFromHeaders_(ctx.headers, {
+      id: id,
+      date: date,
+      supplier: supplier,
+      totalAmount: totalAmount,
+      notes: notes,
+      imageFileIds: imageFileIds,
+      updatedAt: updatedAt,
+      deleted: 'FALSE',
+      serverUpdatedAt: serverUpdatedAt
+    });
+
+    if (existingRow === undefined) {
+      ctx.values.push(newRow);
+      ctx.keyMap.set(id, ctx.values.length - 1);
+      ctx.dirty = true;
+    } else {
+      const stored = ctx.values[existingRow];
+      // See note in upsertItemInMemory_: stored cell may be a Date.
+      const storedUpdatedAt = toIsoTimestamp_(stored[ctx.colIndex.updatedAt]);
+      if (updatedAt >= storedUpdatedAt) {
+        ctx.values[existingRow] = newRow;
+        ctx.dirty = true;
+      }
+      // Older incoming write: skip; do not bump serverUpdatedAt.
+    }
+
+    return { ok: true };
+  } catch (err) {
+    return {
+      error: {
+        index: index,
+        key: (payload && payload.id) ? String(payload.id) : '',
+        message: err && err.message ? err.message : String(err)
+      }
+    };
+  }
+}
+
+/**
  * Soft delete: set deleted=TRUE and bump updatedAt. If the row does not
  * exist yet (phone deleted something we never saw), we insert a tombstone.
  *
  * @param {Object} ctx       Sheet context.
- * @param {string} keyName   Either 'code' (Items) or 'entryId' (PurchaseEntries).
- * @param {Object} payload   { code|entryId, updatedAt }.
+ * @param {string} keyName   'code' (Items), 'entryId' (PurchaseEntries), or 'id' (Bills).
+ * @param {Object} payload   { <keyName>, updatedAt }.
  * @param {number} index     Original index in the bulk request, for error reporting.
  */
 function softDeleteInMemory_(ctx, keyName, payload, index) {
@@ -1114,6 +1405,29 @@ function rowToItemDto_(row, colIndex) {
   };
 }
 
+/** Sheet row → Bills DTO sent to the client. */
+function rowToBillDto_(row, colIndex) {
+  // totalAmount is nullable. An empty cell means "user hasn't entered
+  // an amount yet" — meaningfully different from a zero-rupee bill, so
+  // we emit `null` (not 0) when the cell is empty.
+  const rawTotal = row[colIndex.totalAmount];
+  const totalAmount = (rawTotal === '' || rawTotal === null || rawTotal === undefined)
+    ? null
+    : Number(rawTotal);
+
+  return {
+    id:              toPlainText_(row[colIndex.id]),
+    date:            toLocalDate_(row[colIndex.date]),
+    supplier:        toPlainText_(row[colIndex.supplier]),
+    totalAmount:     totalAmount,
+    notes:           toPlainText_(row[colIndex.notes]),
+    imageFileIds:    toPlainText_(row[colIndex.imageFileIds]),
+    updatedAt:       toIsoTimestamp_(row[colIndex.updatedAt]),
+    deleted:         parseBool_(row[colIndex.deleted]),
+    serverUpdatedAt: toIsoTimestamp_(row[colIndex.serverUpdatedAt])
+  };
+}
+
 /** Sheet row → PurchaseEntries DTO sent to the client. */
 function rowToEntryDto_(row, colIndex) {
   // Quantity is free-form text on the wire. The cell may still hold
@@ -1213,4 +1527,76 @@ function parseBool_(v) {
   if (v === 0 || v === '0') return false;
   const s = String(v || '').trim().toUpperCase();
   return s === 'TRUE';
+}
+
+
+/* =========================================================================
+ *  DRIVE HELPERS  (bill image attachments)
+ *
+ *  Bill images live as standalone files under My Drive →
+ *  "SanthaliaStore Bills". Only the Drive file ID is stored on the Bills
+ *  row (CSV in `imageFileIds`). Deletes are recoverable — the file is
+ *  moved to a `_deleted/` sub-folder instead of being trashed, so the
+ *  shop owner can still get a photo back from the Drive UI.
+ * ========================================================================= */
+
+const BILLS_FOLDER_NAME      = 'SanthaliaStore Bills';
+const BILLS_FOLDER_PROP      = 'bills_folder_id';   // ScriptProperties cache key
+const BILLS_DELETED_SUBNAME  = '_deleted';
+
+/**
+ * Get (or create on first use) the Drive Folder that holds all bill
+ * images. We cache the resolved folder ID in ScriptProperties so we
+ * don't scan My Drive on every uploadBillImage call — DriveApp folder
+ * lookups by name are O(N) over root entries and can be slow once the
+ * shop owner's Drive has grown.
+ *
+ * If the cached ID points to a trashed or otherwise-missing folder
+ * (the user manually deleted it from Drive, for instance) we fall
+ * back to creating a new one. The cache is then refreshed.
+ */
+function getOrCreateBillsFolder_() {
+  const props = PropertiesService.getScriptProperties();
+  const cachedId = props.getProperty(BILLS_FOLDER_PROP);
+
+  if (cachedId) {
+    try {
+      const folder = DriveApp.getFolderById(cachedId);
+      // Trashed folders still resolve by ID but isTrashed() flags them;
+      // recreate in that case so new uploads land somewhere live.
+      if (folder && !folder.isTrashed()) return folder;
+    } catch (e) {
+      // Folder was hard-deleted or we lost access. Fall through to recreate.
+    }
+  }
+
+  // No usable cache. Look the folder up by name first — re-using an
+  // existing one is much friendlier than silently creating "SanthaliaStore
+  // Bills (1)" alongside it. Only create if nothing matches.
+  let folder = null;
+  const it = DriveApp.getRootFolder().getFoldersByName(BILLS_FOLDER_NAME);
+  while (it.hasNext()) {
+    const candidate = it.next();
+    if (!candidate.isTrashed()) { folder = candidate; break; }
+  }
+  if (!folder) {
+    folder = DriveApp.getRootFolder().createFolder(BILLS_FOLDER_NAME);
+  }
+
+  props.setProperty(BILLS_FOLDER_PROP, folder.getId());
+  return folder;
+}
+
+/**
+ * Get or create the `_deleted/` sub-folder used for soft-deleted bill
+ * images. Lives directly under the bills folder so a user browsing
+ * Drive sees recovery photos in one obvious place.
+ */
+function getOrCreateDeletedSubfolder_(parent) {
+  const it = parent.getFoldersByName(BILLS_DELETED_SUBNAME);
+  while (it.hasNext()) {
+    const candidate = it.next();
+    if (!candidate.isTrashed()) return candidate;
+  }
+  return parent.createFolder(BILLS_DELETED_SUBNAME);
 }

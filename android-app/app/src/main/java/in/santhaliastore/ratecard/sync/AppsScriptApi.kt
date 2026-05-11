@@ -50,6 +50,22 @@ interface AppsScriptApi {
         @Body body: RequestBody
     ): PullChangesResponse
 
+    /**
+     * Bill image upload — same envelope shape as [call] but the
+     * response carries the freshly-created Drive file id + viewer URL
+     * that the caller stitches back into the bill's `imageFileIds`
+     * CSV. Declared as its own method (rather than reusing [call])
+     * so Retrofit installs a concrete, non-wildcard return type.
+     *
+     * `deleteBillImage` keeps using [call] because it only needs the
+     * standard [SyncResponse] envelope.
+     */
+    @POST
+    suspend fun uploadBillImage(
+        @Url url: String,
+        @Body body: RequestBody
+    ): UploadBillImageResponse
+
     companion object {
 
         /** Single Moshi instance — adapters cache internally, so reuse it. */

@@ -90,13 +90,20 @@ data class DeleteEntryPayload(
 /**
  * `bulkSync` payload. The server caps total changes at 200 per
  * call (see apps-script BULK_LIMIT) so the worker batches accordingly.
+ *
+ * `bills` / `deletedBills` ride the same envelope as items + entries —
+ * no separate sync action — so a single round-trip flushes every kind
+ * of pending mutation. Defaults are empty lists so older call sites
+ * that don't yet pass bills still compile during the rollout.
  */
 @JsonClass(generateAdapter = true)
 data class BulkSyncPayload(
     val items: List<UpsertItemPayload>,
     val entries: List<UpsertEntryPayload>,
     val deletedItems: List<DeleteItemPayload>,
-    val deletedEntries: List<DeleteEntryPayload>
+    val deletedEntries: List<DeleteEntryPayload>,
+    val bills: List<UpsertBillPayload> = emptyList(),
+    val deletedBills: List<DeleteBillPayload> = emptyList()
 )
 
 /**
@@ -170,7 +177,11 @@ data class PullChangesResponse(
     val entries: List<PulledEntry>,
     val cursor: String,
     val schemaVersion: Int? = null,
-    val time: String? = null
+    val time: String? = null,
+    // Defaulted so a server that hasn't been updated to the bills-aware
+    // build yet still deserialises cleanly into this DTO — it simply
+    // emits no bills and the client applies an empty list.
+    val bills: List<PulledBill> = emptyList()
 )
 
 /**
@@ -207,4 +218,112 @@ data class PulledEntry(
     val updatedAt: String,
     val deleted: Boolean,
     val serverUpdatedAt: String
+)
+
+/* ----------------------------- bills ---------------------------------- */
+
+/**
+ * `upsertBill` payload — mirror of the `bills` sheet row.
+ *
+ * `imageFileIds` is a comma-separated list of Google Drive file IDs.
+ * The empty string means "no images attached" (NOT nullable — see the
+ * matching column comment on [in.santhaliastore.ratecard.data.db.entity.BillEntity]).
+ *
+ * Deliberately omitted: `localImagePaths`. The local cache paths are
+ * meaningless on any other device — syncing them would actively break
+ * the receiver's image cache lookups. Local-only metadata never
+ * crosses the wire.
+ */
+@JsonClass(generateAdapter = true)
+data class UpsertBillPayload(
+    val id: String,
+    val date: String,
+    val supplier: String?,
+    val totalAmount: Double?,
+    val notes: String?,
+    val imageFileIds: String,
+    val updatedAt: String
+)
+
+/** `deleteBill` payload. */
+@JsonClass(generateAdapter = true)
+data class DeleteBillPayload(
+    val id: String,
+    val updatedAt: String
+)
+
+/**
+ * A single bill row pulled from the server. Mirrors [PulledItem] /
+ * [PulledEntry] in the conflict / cursor semantics.
+ */
+@JsonClass(generateAdapter = true)
+data class PulledBill(
+    val id: String,
+    val date: String,
+    val supplier: String?,
+    val totalAmount: Double?,
+    val notes: String?,
+    val imageFileIds: String,
+    val updatedAt: String,
+    val deleted: Boolean,
+    val serverUpdatedAt: String
+)
+
+/* ---------------------- bill image upload / delete -------------------- */
+
+/**
+ * `uploadBillImage` payload. The Apps Script side accepts a base64
+ * blob, writes it to a fixed Drive folder, and returns the file id
+ * plus a viewable URL.
+ *
+ * Base64 is the lowest-common-denominator transport — Apps Script's
+ * web-app endpoint doesn't accept multipart uploads cleanly. The
+ * client splits images larger than the server's body cap into one
+ * payload per image (each bill page is a separate POST).
+ *
+ *   - `billId`     UUID of the bill this image belongs to. Server
+ *                  uses it as the file-name prefix on Drive so an
+ *                  admin can correlate Drive ↔ sheet by eye.
+ *   - `fileName`   Original filename hint (e.g. "bill-page1.jpg").
+ *                  Server is free to mangle it for uniqueness.
+ *   - `mimeType`   `image/jpeg` or `image/png` — Drive needs this to
+ *                  set the correct MIME on the uploaded file.
+ *   - `dataBase64` Raw image bytes, base64-encoded without any data:
+ *                  URL prefix.
+ */
+@JsonClass(generateAdapter = true)
+data class UploadBillImagePayload(
+    val billId: String,
+    val fileName: String,
+    val mimeType: String,
+    val dataBase64: String
+)
+
+/**
+ * `uploadBillImage` response. Mirrors [SyncResponse]'s shape but adds
+ * the Drive file metadata we need to wire the upload back into the
+ * bill row.
+ *
+ *   - `fileId`  Drive file id — append to the bill's `imageFileIds`
+ *               CSV on success.
+ *   - `viewUrl` Direct-view URL the UI can deep-link to when the
+ *               local cached copy is missing.
+ */
+@JsonClass(generateAdapter = true)
+data class UploadBillImageResponse(
+    val ok: Boolean,
+    val fileId: String?,
+    val viewUrl: String?,
+    val time: String? = null,
+    val errors: List<SyncError>? = null
+)
+
+/**
+ * `deleteBillImage` payload. The server removes the Drive file (or
+ * tombstones it server-side, depending on the Apps Script policy) and
+ * the standard [SyncResponse] envelope reports success.
+ */
+@JsonClass(generateAdapter = true)
+data class DeleteBillImagePayload(
+    val fileId: String
 )

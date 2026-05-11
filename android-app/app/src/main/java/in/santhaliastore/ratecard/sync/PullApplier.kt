@@ -2,8 +2,10 @@ package `in`.santhaliastore.ratecard.sync
 
 import androidx.room.withTransaction
 import `in`.santhaliastore.ratecard.data.db.AppDatabase
+import `in`.santhaliastore.ratecard.data.db.dao.BillDao
 import `in`.santhaliastore.ratecard.data.db.dao.ItemDao
 import `in`.santhaliastore.ratecard.data.db.dao.PurchaseEntryDao
+import `in`.santhaliastore.ratecard.data.db.entity.BillEntity
 import `in`.santhaliastore.ratecard.data.db.entity.ItemEntity
 import `in`.santhaliastore.ratecard.data.db.entity.PurchaseEntryEntity
 
@@ -28,17 +30,22 @@ import `in`.santhaliastore.ratecard.data.db.entity.PurchaseEntryEntity
  * Order matters: we apply items BEFORE entries inside the same
  * transaction so that a freshly-pulled entry pointing at a freshly-pulled
  * item never hits an FK violation (the entry's `itemCode` parent
- * already exists by the time we insert the entry).
+ * already exists by the time we insert the entry). Bills go last —
+ * they have no FK relationship with items or entries so ordering is
+ * cosmetic, but keeping them at the tail makes the per-domain counts
+ * read naturally in the log: items, then entries, then bills.
  */
 class PullApplier(
     private val database: AppDatabase,
     private val itemDao: ItemDao,
-    private val entryDao: PurchaseEntryDao
+    private val entryDao: PurchaseEntryDao,
+    private val billDao: BillDao
 ) {
 
     suspend fun apply(response: PullChangesResponse): PullOutcome {
         var itemsApplied = 0
         var entriesApplied = 0
+        var billsApplied = 0
 
         database.withTransaction {
             // 1) Items first so FK target exists before any entry insert.
@@ -87,9 +94,43 @@ class PullApplier(
                     entriesApplied++
                 }
             }
+
+            // 3) Bills last. No FK to satisfy — the table stands alone —
+            //    so ordering is purely cosmetic. We preserve the local
+            //    `localImagePaths` value on an upsert (server never sends
+            //    it; overwriting with empty would orphan the on-disk
+            //    cache) and only touch the sync-driven columns.
+            for (pulled in response.bills) {
+                val existing = billDao.findById(pulled.id)
+                if (shouldApplyBill(existing, pulled)) {
+                    billDao.upsert(
+                        BillEntity(
+                            id = pulled.id,
+                            date = pulled.date,
+                            supplier = pulled.supplier,
+                            totalAmount = pulled.totalAmount,
+                            notes = pulled.notes,
+                            imageFileIds = pulled.imageFileIds,
+                            // Preserve any existing local cache mapping.
+                            // A pull never knows about local file paths,
+                            // so blanking this would destroy the offline
+                            // viewer's index into the image cache.
+                            localImagePaths = existing?.localImagePaths.orEmpty(),
+                            updatedAt = pulled.updatedAt,
+                            deleted = pulled.deleted,
+                            pendingSync = false
+                        )
+                    )
+                    billsApplied++
+                }
+            }
         }
 
-        return PullOutcome(itemsApplied = itemsApplied, entriesApplied = entriesApplied)
+        return PullOutcome(
+            itemsApplied = itemsApplied,
+            entriesApplied = entriesApplied,
+            billsApplied = billsApplied
+        )
     }
 }
 
@@ -117,11 +158,17 @@ internal fun shouldApplyEntry(existing: PurchaseEntryEntity?, pulled: PulledEntr
     return pulled.updatedAt >= existing.updatedAt
 }
 
+internal fun shouldApplyBill(existing: BillEntity?, pulled: PulledBill): Boolean {
+    if (existing == null) return true
+    return pulled.updatedAt >= existing.updatedAt
+}
+
 /**
  * Counts of rows that actually changed local state. Skip-because-local-newer
  * rows are NOT counted — they're invisible to the user.
  */
 data class PullOutcome(
     val itemsApplied: Int,
-    val entriesApplied: Int
+    val entriesApplied: Int,
+    val billsApplied: Int = 0
 )

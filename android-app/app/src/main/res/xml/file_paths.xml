@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    FileProvider paths for the camera capture flow.
+
+    `bills/` lives inside the app's internal filesDir — the same directory
+    BillImageCache writes compressed JPEGs into. The camera contract
+    needs a content URI it can write to without holding the
+    WRITE_EXTERNAL_STORAGE permission; this FileProvider exposes just
+    that one directory.
+-->
+<paths>
+    <files-path name="bill_captures" path="bills/" />
+</paths>

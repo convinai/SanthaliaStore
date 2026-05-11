@@ -127,7 +127,7 @@ fun SettingsScreen(
         viewModel.events.collect { event ->
             val text = when (event) {
                 is UiEvent.SyncSuccess -> {
-                    val pulled = event.pulledItems + event.pulledEntries
+                    val pulled = event.pulledItems + event.pulledEntries + event.pulledBills
                     when {
                         event.pushed == 0 && pulled == 0 -> snackSyncDoneNoRows
                         event.pushed > 0 && pulled == 0 ->
@@ -141,7 +141,8 @@ fun SettingsScreen(
                 is UiEvent.SyncFailure -> snackSyncFailedFormat.format(event.message)
                 is UiEvent.ResetSuccess -> snackResetDoneFormat.format(
                     event.itemsApplied,
-                    event.entriesApplied
+                    event.entriesApplied,
+                    event.billsApplied
                 )
                 is UiEvent.ResetFailure -> snackResetFailedFormat.format(event.message)
             }

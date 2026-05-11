@@ -108,7 +108,7 @@
     <string name="settings_reset_confirm_title">Pakka reset karein?</string>
     <string name="settings_reset_confirm_message">Phone ka saara data delete ho jaayega aur sheet se fresh load hoga. Yeh wapas nahi aayega.</string>
     <string name="settings_reset_confirm_action">Reset karein</string>
-    <string name="settings_reset_done_format">Reset ho gaya — %1$d items, %2$d entries fresh load</string>
+    <string name="settings_reset_done_format">Reset ho gaya — %1$d items, %2$d entries, %3$d bills fresh load</string>
     <string name="settings_reset_failed_format">Reset nahi hua: %1$s</string>
     <string name="settings_reset_in_progress">Reset ho raha hai…</string>
 
@@ -117,6 +117,64 @@
     <string name="home_last_sync_format">Last sync: %1$s</string>
     <string name="home_never_synced">Abhi tak sync nahi hua</string>
     <string name="home_total_items_format">%1$d items</string>
+
+    <!-- Bottom navigation -->
+    <string name="home_tab_items">Items</string>
+    <string name="home_tab_bills">Bills</string>
+
+    <!-- Bills tab -->
+    <string name="home_fab_add_bill">Bill add karein</string>
+    <string name="bills_total_count_format">%1$d bills</string>
+    <string name="bills_empty_title">Abhi koi bill nahi hai</string>
+    <string name="bills_empty_caption">Supplier ki bill ki photo save karein — taarikh ke saath dhoondhna asaan hoga.</string>
+    <string name="bills_no_supplier">Bina supplier ke</string>
+    <string name="bills_thumb_cd">Bill ki photo</string>
+    <string name="bills_thumb_placeholder_cd">Photo abhi nahi hai</string>
+    <string name="bills_pending_upload_cd">Upload baaki hai</string>
+
+    <!-- Add / Edit bill -->
+    <string name="add_bill_title">Naya bill</string>
+    <string name="edit_bill_title">Bill edit karein</string>
+    <string name="bill_field_date">Date</string>
+    <string name="bill_field_supplier">Supplier (optional)</string>
+    <string name="bill_field_supplier_helper">Kisse khareeda — naam ya dukaan</string>
+    <string name="bill_field_amount">Total amount (optional)</string>
+    <string name="bill_field_amount_helper">Pura bill kitne ka tha</string>
+    <string name="bill_field_notes">Notes (optional)</string>
+    <string name="bill_field_notes_helper">Items, vajah, kuch bhi</string>
+    <string name="bill_photos_title">Bill ki photos</string>
+    <string name="bill_photos_caption">5 photos tak — paper ke ek se zyada page hain to sab daalein</string>
+    <string name="bill_capture_camera">Camera se photo</string>
+    <string name="bill_capture_gallery">Gallery se chunein</string>
+    <string name="bill_capture_processing">Photo compress ho raha hai…</string>
+    <string name="bill_capture_max_reached">Ek baar mein 5 photos tak</string>
+    <string name="bill_capture_failed">Photo nahi le paaye — phir try karein</string>
+    <string name="bill_image_remove_cd">Photo hatayein</string>
+    <string name="bill_save">Save karein</string>
+    <string name="bill_save_no_data">Pehle ek photo ya supplier ka naam daalein</string>
+
+    <!-- Bill detail -->
+    <string name="bill_detail_image_count_format">%1$d / %2$d</string>
+    <string name="bill_detail_no_image">Koi photo nahi</string>
+    <string name="bill_detail_missing_title">Yeh bill ab nahi hai</string>
+    <string name="bill_detail_missing_caption">Shayad delete ho gaya hai. Bills tab pe wapas jaayein.</string>
+    <string name="bill_detail_loading_image">Photo load ho rahi hai…</string>
+    <string name="bill_detail_meta_supplier">Supplier</string>
+    <string name="bill_detail_meta_date">Date</string>
+    <string name="bill_detail_meta_amount">Total</string>
+    <string name="bill_detail_meta_notes">Notes</string>
+    <string name="bill_detail_meta_missing">—</string>
+    <string name="bill_upload_pending">Upload baaki hai</string>
+    <string name="bill_upload_failed">Upload nahi hua</string>
+    <string name="bill_upload_in_progress">Upload ho raha hai…</string>
+
+    <!-- Bill delete -->
+    <string name="delete_bill_title">Bill delete karein?</string>
+    <string name="delete_bill_message">Yeh bill aur uski photos hat jaayengi. Yeh wapas nahi aayega.</string>
+
+    <!-- Bill toasts -->
+    <string name="toast_bill_saved">Bill save ho gaya</string>
+    <string name="toast_bill_deleted">Bill hat gaya</string>
 
     <!-- Settings -->
     <string name="settings_title">Settings</string>
