@@ -1,8 +1,11 @@
 package `in`.santhaliastore.ratecard.ui.screens.bills
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -267,24 +270,40 @@ private fun ZoomableImagePage(
         modifier = Modifier
             .fillMaxSize()
             .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    val newScale = (scale * zoom).coerceIn(1f, 5f)
-                    if (newScale <= 1.05f) {
-                        // Snap to 1x and re-centre when we drop near
-                        // the floor. Without the snap, residual scale
-                        // would keep the pager's swipe-gate triggered.
-                        scale = 1f
-                        offsetX = 0f
-                        offsetY = 0f
-                    } else {
-                        scale = newScale
-                        // Pan with the gesture but clamp softly: the
-                        // image can move at most (scale-1)/2 of the
-                        // page in each direction.
-                        offsetX += pan.x
-                        offsetY += pan.y
-                    }
-                    onZoomChange(scale)
+                // Custom gesture loop instead of detectTransformGestures
+                // because the stock helper consumes every drag — that
+                // blocks the parent HorizontalPager from ever seeing a
+                // single-finger swipe and the user can't flip pages.
+                //
+                // Rule: only consume pointer events when (a) there are
+                // 2+ fingers on screen (pinch), or (b) we're already
+                // zoomed past 1x (so single-finger drags pan the image
+                // instead of paging). Single-finger drag at 1x falls
+                // through to the pager, which swipes between bill
+                // images exactly like the detail-screen carousel.
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val event = awaitPointerEvent()
+                        val pressed = event.changes.count { it.pressed }
+                        val shouldConsume = pressed >= 2 || scale > 1.05f
+                        if (shouldConsume) {
+                            val zoom = event.calculateZoom()
+                            val pan = event.calculatePan()
+                            val newScale = (scale * zoom).coerceIn(1f, 5f)
+                            if (newScale <= 1.05f) {
+                                scale = 1f
+                                offsetX = 0f
+                                offsetY = 0f
+                            } else {
+                                scale = newScale
+                                offsetX += pan.x
+                                offsetY += pan.y
+                            }
+                            onZoomChange(scale)
+                            event.changes.forEach { it.consume() }
+                        }
+                    } while (event.changes.any { it.pressed })
                 }
             }
             .pointerInput(Unit) {
