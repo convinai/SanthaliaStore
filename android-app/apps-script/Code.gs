@@ -410,6 +410,36 @@ function handleUploadBillImage_(payload) {
     const blob = Utilities.newBlob(Utilities.base64Decode(dataBase64), mimeType, driveName);
     const file = folder.createFile(blob);
 
+    // Open the file to "anyone with the link, view-only" so other
+    // devices — which fetch the image as an unauthenticated HTTP
+    // request through Coil, no Google sign-in cookie attached — can
+    // actually render it. Without this step the upload appears to
+    // succeed but the second phone hits a Drive login wall on the
+    // `uc?id=...&export=view` URL and the Bills detail screen shows
+    // a broken-image placeholder (the symptom that surfaced once the
+    // app started being installed on more than one phone).
+    //
+    // Privacy note: Drive file IDs are 33-char URL-safe randoms with
+    // UUID-grade entropy — they are not guessable. The IDs flow only
+    // through the owner's private Sheet, so "anyone with link" in
+    // practice means "anyone the owner has shared the sheet with",
+    // which IS the trust boundary we want.
+    //
+    // Best-effort: a sharing failure does NOT abort the upload. The
+    // file is on Drive and the row will sync; the user can re-run
+    // `repairBillImageSharing` from the editor to retroactively
+    // open every existing image in the bills folder.
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch (shareErr) {
+      // Don't fail the upload over a sharing API hiccup — the bytes
+      // are safely in Drive. Log so the script owner can see it in
+      // Execution log.
+      try {
+        Logger.log('Sharing failed for ' + file.getId() + ': ' + (shareErr && shareErr.message));
+      } catch (_) { /* logger unavailable in some contexts */ }
+    }
+
     const fileId = file.getId();
     // `uc?export=view` is the documented direct-view URL for an image
     // in Drive. The phone uses it as the <img src> after pulling.
@@ -1633,6 +1663,56 @@ function setupBillsDriveFolder() {
   // run-result toast so the user gets a visible confirmation
   // even before they open the log panel.
   return url;
+}
+
+/**
+ * One-off repair: open "anyone with link, view-only" sharing on every
+ * existing bill image already in the Drive folder.
+ *
+ * Why this exists: pre-this-change, `handleUploadBillImage_` created
+ * Drive files without setting permissions, so they defaulted to
+ * "only the script owner can view". Other phones in the household
+ * — which fetch the image as an unauthenticated HTTP request — hit
+ * a Drive login wall and the Bills detail screen rendered a
+ * broken-image placeholder.
+ *
+ * New uploads from now on share themselves automatically. This
+ * function walks the bills folder once to fix the backlog.
+ *
+ * How to run:
+ *   1. Open Code.gs in the Apps Script editor.
+ *   2. In the function dropdown, pick `repairBillImageSharing`.
+ *   3. Click ▶ Run. Approve the Drive permission prompt if asked.
+ *   4. Watch the Execution log — it prints a running count and a
+ *      final summary line.
+ *
+ * Safe to re-run. setSharing on an already-shared file is a no-op
+ * (sharing state is idempotent), and the sub-folder for
+ * soft-deleted images is intentionally NOT touched — those files
+ * are tombstoned, no point exposing them.
+ *
+ * Returns the count of files whose sharing was (re-)applied.
+ */
+function repairBillImageSharing() {
+  const folder = getOrCreateBillsFolder_();
+  const files = folder.getFiles();
+  let ok = 0;
+  let failed = 0;
+  while (files.hasNext()) {
+    const f = files.next();
+    try {
+      f.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      ok++;
+    } catch (e) {
+      failed++;
+      Logger.log('  setSharing failed for ' + f.getId() + ': ' +
+                 (e && e.message ? e.message : String(e)));
+    }
+  }
+  Logger.log('Bill image sharing repair done.');
+  Logger.log('  Shared:  ' + ok);
+  Logger.log('  Failed:  ' + failed);
+  return ok;
 }
 
 /**
