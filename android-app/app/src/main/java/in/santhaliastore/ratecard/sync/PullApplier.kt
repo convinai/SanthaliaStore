@@ -8,6 +8,7 @@ import `in`.santhaliastore.ratecard.data.db.dao.PurchaseEntryDao
 import `in`.santhaliastore.ratecard.data.db.entity.BillEntity
 import `in`.santhaliastore.ratecard.data.db.entity.ItemEntity
 import `in`.santhaliastore.ratecard.data.db.entity.PurchaseEntryEntity
+import `in`.santhaliastore.ratecard.util.Time
 
 /**
  * Applies a [PullChangesResponse] to Room atomically.
@@ -47,18 +48,35 @@ class PullApplier(
         var entriesApplied = 0
         var billsApplied = 0
 
+        // Snapshot the apply-time clock so every row written in this
+        // batch uses the SAME fallback `updatedAt` when normalisation
+        // can't recover the original timestamp. Keeps the LWW story
+        // stable within a single pull.
+        val applyClock = Time.nowIso()
+
         database.withTransaction {
             // 1) Items first so FK target exists before any entry insert.
             for (pulled in response.items) {
-                val existing = itemDao.findByCode(pulled.code)
-                if (shouldApplyItem(existing, pulled)) {
+                // Normalise BEFORE the conflict check. The corrupt
+                // pre-v1.0.3 `"Wed May 06 2026 …"` shape starts with
+                // `'W'`, which lex-sorts above any digit — so a raw
+                // comparison would always declare the pulled row newer
+                // and silently re-corrupt local data we just repaired.
+                // We coerce to canonical ISO before the LWW check
+                // (apply-time clock as the fallback when the original
+                // can't be recovered) so the comparison is sound.
+                val normalisedPulled = pulled.copy(
+                    updatedAt = Time.normalizeIsoTimestamp(pulled.updatedAt) ?: applyClock
+                )
+                val existing = itemDao.findByCode(normalisedPulled.code)
+                if (shouldApplyItem(existing, normalisedPulled)) {
                     itemDao.upsert(
                         ItemEntity(
-                            code = pulled.code,
-                            name = pulled.name,
-                            unit = pulled.unit,
-                            updatedAt = pulled.updatedAt,
-                            deleted = pulled.deleted,
+                            code = normalisedPulled.code,
+                            name = normalisedPulled.name,
+                            unit = normalisedPulled.unit,
+                            updatedAt = normalisedPulled.updatedAt,
+                            deleted = normalisedPulled.deleted,
                             // Pulled rows are server-authoritative — nothing
                             // to push back. If we left this as `true` we'd
                             // immediately push it back next sync, wasting
@@ -75,19 +93,34 @@ class PullApplier(
             // pull payload caps server-side, so we're not paying for an
             // unbounded fan-out.
             for (pulled in response.entries) {
-                val existing = entryDao.findById(pulled.entryId)
-                if (shouldApplyEntry(existing, pulled)) {
+                // Same locale-dump defence as items. `date` is repaired
+                // alongside `updatedAt` because it drives the home-row
+                // `ORDER BY date DESC` pick — leaving even one
+                // unrepaired `"Wed May …"` string in the column would
+                // reintroduce the user's original bug. Fallback for
+                // an unparseable date: keep the raw value. We can't
+                // safely fabricate a calendar date the way we can a
+                // timestamp; better to surface the weirdness than to
+                // silently shift the purchase day. The v3→v4 migration
+                // is the safety net for those edge cases (it runs on
+                // upgrade, not on pull).
+                val normalisedPulled = pulled.copy(
+                    date = Time.normalizeLocalDate(pulled.date) ?: pulled.date,
+                    updatedAt = Time.normalizeIsoTimestamp(pulled.updatedAt) ?: applyClock
+                )
+                val existing = entryDao.findById(normalisedPulled.entryId)
+                if (shouldApplyEntry(existing, normalisedPulled)) {
                     entryDao.upsert(
                         PurchaseEntryEntity(
-                            entryId = pulled.entryId,
-                            itemCode = pulled.itemCode,
-                            date = pulled.date,
-                            pricePerUnit = pulled.pricePerUnit,
-                            quantity = pulled.quantity,
-                            supplier = pulled.supplier,
-                            notes = pulled.notes,
-                            updatedAt = pulled.updatedAt,
-                            deleted = pulled.deleted,
+                            entryId = normalisedPulled.entryId,
+                            itemCode = normalisedPulled.itemCode,
+                            date = normalisedPulled.date,
+                            pricePerUnit = normalisedPulled.pricePerUnit,
+                            quantity = normalisedPulled.quantity,
+                            supplier = normalisedPulled.supplier,
+                            notes = normalisedPulled.notes,
+                            updatedAt = normalisedPulled.updatedAt,
+                            deleted = normalisedPulled.deleted,
                             pendingSync = false
                         )
                     )

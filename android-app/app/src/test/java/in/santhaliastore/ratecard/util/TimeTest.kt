@@ -141,4 +141,94 @@ class TimeTest {
             .toEpochMilli()
         assertEquals(expected, ms)
     }
+
+    // ----------------------------------------------------------------
+    // normalizeLocalDate / normalizeIsoTimestamp — the locale-dump
+    // repair helpers used by the v3→v4 migration and PullApplier.
+    // The migration's correctness is entirely upstream of these; pin
+    // their behaviour here so they can't silently regress.
+    // ----------------------------------------------------------------
+
+    @Test
+    fun `normalizeLocalDate passes canonical YYYY-MM-DD through`() {
+        assertEquals("2026-05-06", Time.normalizeLocalDate("2026-05-06"))
+        assertEquals("2025-01-01", Time.normalizeLocalDate("2025-01-01"))
+    }
+
+    @Test
+    fun `normalizeLocalDate strips ISO 8601 timestamp suffix to date`() {
+        assertEquals("2026-05-06", Time.normalizeLocalDate("2026-05-06T00:00:00Z"))
+        assertEquals(
+            "2026-05-06",
+            Time.normalizeLocalDate("2026-05-06T13:45:30.123+05:30")
+        )
+    }
+
+    @Test
+    fun `normalizeLocalDate parses JS Date toString locale dump`() {
+        // The pre-v1.0.3 corruption shape. The leading "EEE MMM dd yyyy"
+        // is the load-bearing fragment — anything after it is timezone
+        // chatter the parser doesn't need.
+        assertEquals(
+            "2026-05-06",
+            Time.normalizeLocalDate(
+                "Wed May 06 2026 00:00:00 GMT+0530 (India Standard Time)"
+            )
+        )
+        // A different month/day/year to prove it's not the test value.
+        assertEquals(
+            "2025-12-31",
+            Time.normalizeLocalDate("Wed Dec 31 2025 23:59:59 GMT+0000 (UTC)")
+        )
+    }
+
+    @Test
+    fun `normalizeLocalDate returns null for blank or unparseable input`() {
+        assertNull(Time.normalizeLocalDate(null))
+        assertNull(Time.normalizeLocalDate(""))
+        assertNull(Time.normalizeLocalDate("   "))
+        assertNull(Time.normalizeLocalDate("garbage"))
+        // A genuinely-impossible date — parser must reject, not snap
+        // it to a neighbour.
+        assertNull(Time.normalizeLocalDate("2026-13-40"))
+    }
+
+    @Test
+    fun `normalizeIsoTimestamp passes canonical ISO instant through`() {
+        assertEquals(
+            "2026-05-06T12:34:56Z",
+            Time.normalizeIsoTimestamp("2026-05-06T12:34:56Z")
+        )
+        // Round-trip a sub-second value — Instant.toString preserves
+        // millis when present.
+        assertEquals(
+            "2026-05-06T12:34:56.789Z",
+            Time.normalizeIsoTimestamp("2026-05-06T12:34:56.789Z")
+        )
+    }
+
+    @Test
+    fun `normalizeIsoTimestamp converts ISO with explicit offset to Z form`() {
+        // "+05:30" form — parsed via OffsetDateTime then collapsed to
+        // its UTC instant.
+        assertEquals(
+            "2026-05-06T07:04:56Z",
+            Time.normalizeIsoTimestamp("2026-05-06T12:34:56+05:30")
+        )
+    }
+
+    @Test
+    fun `normalizeIsoTimestamp returns null for blank or unparseable input`() {
+        assertNull(Time.normalizeIsoTimestamp(null))
+        assertNull(Time.normalizeIsoTimestamp(""))
+        // The JS locale-dump shape can't be parsed by the strict ISO
+        // parsers — caller (the migration) falls back to nowIso for
+        // these. We assert null here so the contract is unambiguous.
+        assertNull(
+            Time.normalizeIsoTimestamp(
+                "Wed May 06 2026 00:00:00 GMT+0530 (India Standard Time)"
+            )
+        )
+        assertNull(Time.normalizeIsoTimestamp("2026-05-06")) // date-only is not a timestamp
+    }
 }

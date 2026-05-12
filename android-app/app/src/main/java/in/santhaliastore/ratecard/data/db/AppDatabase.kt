@@ -13,6 +13,7 @@ import `in`.santhaliastore.ratecard.data.db.entity.BillEntity
 import `in`.santhaliastore.ratecard.data.db.entity.ItemEntity
 import `in`.santhaliastore.ratecard.data.db.entity.ItemFts
 import `in`.santhaliastore.ratecard.data.db.entity.PurchaseEntryEntity
+import `in`.santhaliastore.ratecard.util.Time
 
 /**
  * Single Room database for the whole app.
@@ -36,7 +37,7 @@ import `in`.santhaliastore.ratecard.data.db.entity.PurchaseEntryEntity
         ItemFts::class,
         BillEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -144,6 +145,152 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v3 → v4: no schema change. Pure data repair for the
+         * pre-v1.0.3 "locale dump" corruption that leaked into the
+         * local DB via the Apps Script's old un-typed cell reads.
+         *
+         * Symptom the user saw: an item's home row reported the older
+         * of two purchase entries as "Aakhri rate", and the Item Detail
+         * list ordered entries inconsistently. Root cause: the
+         * `purchase_entries.date` column for the affected row held a
+         * value like `"Wed May 06 2026 00:00:00 GMT+0530 (India Standard Time)"`
+         * instead of `"2026-05-06"`. SQLite compares TEXT
+         * lexicographically, and `'W'` (0x57) sorts above `'2'` (0x32),
+         * so any `ORDER BY date DESC` picked the corrupt row.
+         *
+         * The same shape also infected `updatedAt` on the same row —
+         * which is worse, because LWW (both client `PullApplier` and
+         * server-side Apps Script) compares `updatedAt` strings the
+         * same way. The corrupt value lex-wins every comparison, so
+         * fresh server data could never overwrite the row. The DB was
+         * permanently stuck without intervention.
+         *
+         * This migration walks the affected tables exactly once:
+         *
+         *   1. `purchase_entries` — rewrite `date` to canonical
+         *      `YYYY-MM-DD` when [Time.normalizeLocalDate] can parse
+         *      the corrupt value. Refresh `updatedAt` to `nowIso()`
+         *      and flag the row `pendingSync = 1` so the corrected
+         *      value pushes to the sheet on the next sync. Setting
+         *      `updatedAt` to "now" deliberately loses the original
+         *      write timestamp (which was corrupt anyway) in exchange
+         *      for an LWW comparator that finally beats the stale
+         *      copy on the server.
+         *
+         *   2. `items` — same treatment for `updatedAt` alone. Items
+         *      have no `date` column. Touch the row only if `updatedAt`
+         *      doesn't already parse as canonical ISO 8601.
+         *
+         * Rows whose `date` is unparseable are left alone — there's no
+         * safe default; better to surface a weird display than fabricate
+         * a date. The user can edit the row by hand.
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                repairPurchaseEntryDates(db)
+                repairUpdatedAtColumn(db, table = "purchase_entries", pkCol = "entryId")
+                repairUpdatedAtColumn(db, table = "items",            pkCol = "code")
+            }
+
+            /**
+             * Scan `purchase_entries.date` for any value that isn't
+             * already a canonical `YYYY-MM-DD` string (length 10 +
+             * matches the digit-dash-digit GLOB) and try to repair it
+             * via [Time.normalizeLocalDate]. Rows whose `date` is
+             * already canonical are skipped here for cheapness;
+             * `updatedAt` on those rows is handled separately by
+             * [repairUpdatedAtColumn] with its own filter.
+             */
+            private fun repairPurchaseEntryDates(db: SupportSQLiteDatabase) {
+                val now = Time.nowIso()
+                val cursor = db.query(
+                    """
+                    SELECT entryId, date FROM purchase_entries
+                    WHERE NOT (length(date) = 10
+                               AND date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')
+                    """.trimIndent()
+                )
+                cursor.use {
+                    while (it.moveToNext()) {
+                        // Wrap each row in runCatching so a single
+                        // malformed row (e.g. wrong column type after
+                        // a manual DB edit) can't abort the migration
+                        // and leave the user stranded on app launch.
+                        // The row stays as-is; the rest of the table
+                        // still gets repaired.
+                        runCatching {
+                            val entryId = it.getString(0)
+                            val bad = it.getString(1)
+                            val fixed = Time.normalizeLocalDate(bad)
+                                ?: return@runCatching
+                            db.execSQL(
+                                """
+                                UPDATE purchase_entries
+                                SET date = ?, updatedAt = ?, pendingSync = 1
+                                WHERE entryId = ?
+                                """.trimIndent(),
+                                arrayOf<Any?>(fixed, now, entryId)
+                            )
+                        }
+                    }
+                }
+            }
+
+            /**
+             * Parameterised over (table, primary-key column) because
+             * the repair shape is identical for `purchase_entries` and
+             * `items` — only the table name and PK differ. SQLite
+             * doesn't allow binding identifiers as parameters, so we
+             * splice them into the query text directly. Both arguments
+             * are hard-coded constants from this migration, NOT user
+             * input — no injection risk.
+             *
+             * Filter: a canonical ISO 8601 with `Z` starts with four
+             * digits and has `'T'` at position 10 (1-indexed in
+             * SQLite's `substr`). The GLOB on the first four chars
+             * narrows to YYYY-shaped prefixes; the `substr(...,11,1)`
+             * check pins the literal `T` separator. Anything failing
+             * either check is considered corrupt and parsed in Kotlin.
+             */
+            private fun repairUpdatedAtColumn(
+                db: SupportSQLiteDatabase,
+                table: String,
+                pkCol: String
+            ) {
+                val now = Time.nowIso()
+                val cursor = db.query(
+                    """
+                    SELECT $pkCol, updatedAt FROM $table
+                    WHERE NOT (substr(updatedAt, 1, 4) GLOB '[0-9][0-9][0-9][0-9]'
+                               AND substr(updatedAt, 11, 1) = 'T')
+                    """.trimIndent()
+                )
+                cursor.use {
+                    while (it.moveToNext()) {
+                        runCatching {
+                            val pk = it.getString(0)
+                            val bad = it.getString(1)
+                            // Try to recover the original timestamp; if we
+                            // can't, substitute `now` — the row will lose
+                            // its true write-time but at least LWW becomes
+                            // unstuck. Either outcome flags pendingSync so
+                            // the sheet picks up the canonical form.
+                            val fixed = Time.normalizeIsoTimestamp(bad) ?: now
+                            db.execSQL(
+                                """
+                                UPDATE $table
+                                SET updatedAt = ?, pendingSync = 1
+                                WHERE $pkCol = ?
+                                """.trimIndent(),
+                                arrayOf<Any?>(fixed, pk)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         fun build(context: Context): AppDatabase = Room
             .databaseBuilder(
                 context.applicationContext,
@@ -152,7 +299,7 @@ abstract class AppDatabase : RoomDatabase() {
             )
             // WAL is on by default — leaving the explicit setter out so we
             // pick up Room's recommended journal mode for the platform.
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
             .fallbackToDestructiveMigrationOnDowngrade()
             .build()
     }

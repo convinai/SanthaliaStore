@@ -4,6 +4,7 @@ import android.content.Context
 import `in`.santhaliastore.ratecard.R
 import java.time.Instant
 import java.time.LocalDate
+import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -25,6 +26,23 @@ object Time {
         DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH)
     private val DISPLAY_DATETIME_FMT: DateTimeFormatter =
         DateTimeFormatter.ofPattern("d MMM yyyy h:mm a", Locale.ENGLISH)
+    /**
+     * Parser for the leading 15 chars of JavaScript's `Date.toString()`
+     * output — e.g. `"Wed May 06 2026"` taken from the full string
+     * `"Wed May 06 2026 00:00:00 GMT+0530 (India Standard Time)"`.
+     *
+     * This is the corruption shape produced by the pre-v1.0.3 Apps
+     * Script when a sheet cell holding a Date object was read via raw
+     * `String(cell)` instead of the typed normalisers it now uses. Such
+     * strings ended up persisted in the local Room DB and there's no
+     * way to recover them without parsing in Kotlin.
+     *
+     * Locale.ENGLISH because JavaScript emits English day/month names
+     * regardless of the device locale — locking the parser to ENGLISH
+     * means a Hinglish-locale phone still parses the value correctly.
+     */
+    private val JS_DATE_PREFIX_FMT: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("EEE MMM dd yyyy", Locale.ENGLISH)
 
     /**
      * Hard ceiling on the fallback string returned by [displayDate] when
@@ -136,6 +154,97 @@ object Time {
             daysDiff < 365L -> context.getString(R.string.time_months_ago_format, (daysDiff / 30).toInt())
             else -> context.getString(R.string.time_years_ago_format, (daysDiff / 365).toInt())
         }
+    }
+
+    /**
+     * Coerce a possibly-corrupt purchase-date string into canonical
+     * `YYYY-MM-DD`, or return `null` if the input is unrecognisable.
+     *
+     * Accepted shapes, in order:
+     *
+     *   1. **Canonical** `YYYY-MM-DD` — passes through unchanged
+     *      (after a parse / format round-trip that also strips
+     *      any leading zeros / whitespace anomalies).
+     *
+     *   2. **ISO 8601 timestamp prefix** `YYYY-MM-DDT...` — strip to
+     *      the leading date. The shape check guards a cheap path: we
+     *      verify `[4] == '-'` and `[7] == '-'` before paying parser
+     *      cost on obviously-wrong input.
+     *
+     *   3. **JavaScript `Date.toString()` locale dump** —
+     *      `"Wed May 06 2026 00:00:00 GMT+0530 (India Standard Time)"`.
+     *      Parse the leading `"EEE MMM dd yyyy"` (15 chars) with the
+     *      English-locale formatter and re-emit canonical.
+     *
+     * The function is the single canonical place where corrupt date
+     * strings are repaired. Used by [in.santhaliastore.ratecard.data.db.AppDatabase]'s
+     * v3→v4 migration (sweeps existing rows) and by
+     * [in.santhaliastore.ratecard.sync.PullApplier] (prevents future
+     * server pulls from re-introducing corruption).
+     *
+     * Returns `null` on anything else — caller should leave the value
+     * alone rather than guess. A `null` return is not an error; it just
+     * means "I cannot prove this is salvageable."
+     */
+    fun normalizeLocalDate(raw: String?): String? {
+        if (raw.isNullOrBlank()) return null
+        val s = raw.trim()
+        // 1) Canonical YYYY-MM-DD.
+        runCatching {
+            return LocalDate.parse(s, PURCHASE_DATE_FMT).format(PURCHASE_DATE_FMT)
+        }
+        // 2) ISO 8601 timestamp prefix `YYYY-MM-DDT...`.
+        if (s.length >= 10 && s[4] == '-' && s[7] == '-') {
+            runCatching {
+                return LocalDate.parse(s.substring(0, 10), PURCHASE_DATE_FMT)
+                    .format(PURCHASE_DATE_FMT)
+            }
+        }
+        // 3) JS Date.toString() prefix.
+        if (s.length >= 15) {
+            runCatching {
+                return LocalDate.parse(s.substring(0, 15), JS_DATE_PREFIX_FMT)
+                    .format(PURCHASE_DATE_FMT)
+            }
+        }
+        return null
+    }
+
+    /**
+     * Coerce a possibly-corrupt `updatedAt` string into canonical ISO
+     * 8601 with `Z`, or return `null` if it's unrecognisable.
+     *
+     * Sync uses `updatedAt` for last-writer-wins on both the client and
+     * the Apps Script server. SQLite / V8 compare these strings
+     * lexicographically — so a corrupt locale dump like
+     * `"Wed May 06 2026 …"` (starting with `'W'`) always lex-wins over
+     * any canonical ISO string (starting with a digit), permanently
+     * preventing a fresh pull from overwriting the row. Normalising
+     * the column unsticks that.
+     *
+     * Accepted shapes, in order:
+     *
+     *   1. Canonical [Instant.parse]able string —
+     *      `"2026-05-06T00:00:00Z"` or `"2026-05-06T00:00:00.123Z"`.
+     *
+     *   2. ISO 8601 with an explicit offset — parsed via
+     *      [OffsetDateTime.parse] and re-emitted in `Z` form.
+     *
+     * Anything else (notably the JS locale dump, which carries timezone
+     * information in a non-ISO format) returns `null`. The migration
+     * substitutes [nowIso] in that case — accepting some loss of write
+     * history in exchange for an LWW comparator that actually works.
+     */
+    fun normalizeIsoTimestamp(raw: String?): String? {
+        if (raw.isNullOrBlank()) return null
+        val s = raw.trim()
+        runCatching {
+            return Instant.parse(s).toString()
+        }
+        runCatching {
+            return OffsetDateTime.parse(s).toInstant().toString()
+        }
+        return null
     }
 
     private fun relativeFromInstant(context: Context, then: Instant): String {

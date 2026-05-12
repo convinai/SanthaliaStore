@@ -97,6 +97,25 @@ interface ItemDao {
      *
      * Sort: pinned by `name COLLATE NOCASE` so the list reads
      * alphabetically regardless of casing.
+     *
+     * "Most recent entry" is picked in TWO steps so the projected row
+     * is atomic — i.e. price and date always come from the same entry:
+     *
+     *   1. Inner correlated subquery returns ONE `entryId` per item,
+     *      ordered by `date DESC, updatedAt DESC, entryId DESC`.
+     *      The `entryId DESC` is a deterministic tertiary tiebreaker:
+     *      two entries with the same purchase date and the same
+     *      `updatedAt` (e.g. created in the same millisecond by a
+     *      batch upsert) used to leave the order undefined, which
+     *      allowed two separate subqueries — one for price, one for
+     *      date — to disagree on which row to pick. With a single
+     *      lookup the question can't arise.
+     *
+     *   2. Outer `LEFT JOIN purchase_entries pe ON pe.entryId = (...)`
+     *      pulls every projected column from that single row. LEFT
+     *      JOIN keeps items with zero entries (their `lastPrice` /
+     *      `lastDate` come back as NULL, which the UI renders as
+     *      "Abhi rate nahi").
      */
     @Transaction
     @Query(
@@ -105,14 +124,15 @@ interface ItemDao {
             i.code AS code,
             i.name AS name,
             i.unit AS unit,
-            (SELECT pe.pricePerUnit FROM purchase_entries pe
-             WHERE pe.itemCode = i.code AND pe.deleted = 0
-             ORDER BY pe.date DESC, pe.updatedAt DESC LIMIT 1) AS lastPrice,
-            (SELECT pe.date FROM purchase_entries pe
-             WHERE pe.itemCode = i.code AND pe.deleted = 0
-             ORDER BY pe.date DESC, pe.updatedAt DESC LIMIT 1) AS lastDate,
+            pe.pricePerUnit AS lastPrice,
+            pe.date AS lastDate,
             i.pendingSync AS pendingSync
         FROM items i
+        LEFT JOIN purchase_entries pe ON pe.entryId = (
+            SELECT pe2.entryId FROM purchase_entries pe2
+            WHERE pe2.itemCode = i.code AND pe2.deleted = 0
+            ORDER BY pe2.date DESC, pe2.updatedAt DESC, pe2.entryId DESC LIMIT 1
+        )
         WHERE i.deleted = 0
         ORDER BY i.name COLLATE NOCASE ASC
         """
@@ -126,6 +146,9 @@ interface ItemDao {
      *
      * The query is appended with `*` by the caller (see ItemRepository)
      * so partial-prefix searches work.
+     *
+     * "Most recent entry" pick mirrors [pagedItemsWithLastEntry] — same
+     * two-step entryId lookup so price + date always come from one row.
      */
     @Transaction
     @Query(
@@ -134,14 +157,15 @@ interface ItemDao {
             i.code AS code,
             i.name AS name,
             i.unit AS unit,
-            (SELECT pe.pricePerUnit FROM purchase_entries pe
-             WHERE pe.itemCode = i.code AND pe.deleted = 0
-             ORDER BY pe.date DESC, pe.updatedAt DESC LIMIT 1) AS lastPrice,
-            (SELECT pe.date FROM purchase_entries pe
-             WHERE pe.itemCode = i.code AND pe.deleted = 0
-             ORDER BY pe.date DESC, pe.updatedAt DESC LIMIT 1) AS lastDate,
+            pe.pricePerUnit AS lastPrice,
+            pe.date AS lastDate,
             i.pendingSync AS pendingSync
         FROM items i
+        LEFT JOIN purchase_entries pe ON pe.entryId = (
+            SELECT pe2.entryId FROM purchase_entries pe2
+            WHERE pe2.itemCode = i.code AND pe2.deleted = 0
+            ORDER BY pe2.date DESC, pe2.updatedAt DESC, pe2.entryId DESC LIMIT 1
+        )
         WHERE i.deleted = 0
           AND i.code IN (SELECT code FROM items_fts WHERE items_fts MATCH :query)
         ORDER BY i.name COLLATE NOCASE ASC
