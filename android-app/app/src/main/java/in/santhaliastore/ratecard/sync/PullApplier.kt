@@ -47,6 +47,11 @@ class PullApplier(
         var itemsApplied = 0
         var entriesApplied = 0
         var billsApplied = 0
+        // Count of pulled entries whose parent item is absent both in
+        // the pulled batch and locally — see the FK pre-check in the
+        // entries loop for why this happens and why we silently skip
+        // rather than fail the whole transaction.
+        var orphansSkipped = 0
 
         // Snapshot the apply-time clock so every row written in this
         // batch uses the SAME fallback `updatedAt` when normalisation
@@ -93,6 +98,30 @@ class PullApplier(
             // pull payload caps server-side, so we're not paying for an
             // unbounded fan-out.
             for (pulled in response.entries) {
+                // FK pre-check. The Apps Script's `collectChangedRows_`
+                // intentionally drops tombstone rows from the response,
+                // but it drops them per-sheet — a soft-deleted item is
+                // omitted from `items[]`, while entries still attached
+                // to that item's `code` continue to appear in
+                // `entries[]`. Inserting such an orphan into Room
+                // throws SQLITE_CONSTRAINT_FOREIGNKEY (code 787) and
+                // aborts the entire transaction, which on a fresh
+                // install means NOTHING applies and every subsequent
+                // sync re-fails the same way.
+                //
+                // Skipping orphans is the right user-facing outcome:
+                // the item that owned this history is gone, so the
+                // history has no home to render under. The skipped
+                // count is rolled up in [PullOutcome.orphansSkipped]
+                // so the sync summary can surface it — and so the
+                // server-side cleanup ticket has something concrete
+                // to count.
+                val parent = itemDao.findByCode(pulled.itemCode)
+                if (parent == null) {
+                    orphansSkipped++
+                    continue
+                }
+
                 // Same locale-dump defence as items. `date` is repaired
                 // alongside `updatedAt` because it drives the home-row
                 // `ORDER BY date DESC` pick — leaving even one
@@ -162,7 +191,8 @@ class PullApplier(
         return PullOutcome(
             itemsApplied = itemsApplied,
             entriesApplied = entriesApplied,
-            billsApplied = billsApplied
+            billsApplied = billsApplied,
+            orphansSkipped = orphansSkipped
         )
     }
 }
@@ -199,9 +229,15 @@ internal fun shouldApplyBill(existing: BillEntity?, pulled: PulledBill): Boolean
 /**
  * Counts of rows that actually changed local state. Skip-because-local-newer
  * rows are NOT counted — they're invisible to the user.
+ *
+ * `orphansSkipped` is the count of pulled entries whose parent item
+ * was missing locally and in the same batch — see PullApplier's FK
+ * pre-check. Defaults to 0 so older call sites and tests that
+ * pre-date the field still compile.
  */
 data class PullOutcome(
     val itemsApplied: Int,
     val entriesApplied: Int,
-    val billsApplied: Int = 0
+    val billsApplied: Int = 0,
+    val orphansSkipped: Int = 0
 )
